@@ -1,7 +1,8 @@
 "use client";
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, removeLead } from "./actions";
+import { connectWhatsapp, whatsappStatus } from "./whatsapp-actions";
 
 const TIERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30];
 const STAGES = [
@@ -62,6 +63,29 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   const [leadError, setLeadError] = useState("");
   const [pending, startTransition] = useTransition();
 
+  const [waConnected, setWaConnected] = useState(false);
+  const [waQr, setWaQr] = useState(null);
+  const [waLoading, setWaLoading] = useState(false);
+
+  const checkWaStatus = useCallback(async () => {
+    const res = await whatsappStatus(targetUserId);
+    setWaConnected(!!res.connected);
+    setWaQr(res.qrDataUrl || null);
+  }, [targetUserId]);
+
+  useEffect(() => {
+    checkWaStatus();
+    const interval = setInterval(checkWaStatus, 4000);
+    return () => clearInterval(interval);
+  }, [checkWaStatus]);
+
+  const doConnectWhatsapp = async () => {
+    setWaLoading(true);
+    await connectWhatsapp(targetUserId);
+    await checkWaStatus();
+    setWaLoading(false);
+  };
+
   const doSaveScript = () => {
     startTransition(async () => {
       await saveScript(targetUserId, script);
@@ -121,6 +145,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
 
       <div className="px-5 pt-4 flex gap-2">
         {[
+          ["whatsapp", "WhatsApp"],
           ["escrito", "Tu escrito"],
           ["precios", "Precios"],
           ["cola", "Cola de contactos"],
@@ -135,6 +160,40 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
           </button>
         ))}
       </div>
+
+      {tab === "whatsapp" && (
+        <div className="px-5 pt-4 flex flex-col items-center text-center">
+          {waConnected ? (
+            <div className="w-full rounded-xl p-6" style={{ background: "#141B24", border: "1px solid #34D399" }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: "#34D399" }}>WhatsApp conectado ✓</div>
+              <div style={{ fontSize: 12, color: "#8B96A5", marginTop: 6 }}>
+                Tu bot ya puede mandar y recibir mensajes. No cierres sesión desde tu teléfono o se desconecta.
+              </div>
+            </div>
+          ) : waQr ? (
+            <div className="w-full rounded-xl p-5" style={{ background: "#141B24", border: "1px solid #232D3A" }}>
+              <div style={{ fontSize: 13, color: "#8B96A5", marginBottom: 12 }}>
+                Escanea con el WhatsApp de tu número dedicado: Ajustes → Dispositivos vinculados → Vincular un dispositivo
+              </div>
+              <img src={waQr} alt="Código QR de WhatsApp" style={{ width: "100%", maxWidth: 260, margin: "0 auto", borderRadius: 12 }} />
+            </div>
+          ) : (
+            <div className="w-full rounded-xl p-6" style={{ background: "#141B24", border: "1px solid #232D3A" }}>
+              <div style={{ fontSize: 13, color: "#8B96A5", marginBottom: 14 }}>
+                Aún no has conectado tu WhatsApp. Necesitas un número dedicado (no tu número personal).
+              </div>
+              <button
+                onClick={doConnectWhatsapp}
+                disabled={waLoading}
+                className="px-4 py-2.5 rounded-xl font-semibold text-sm"
+                style={{ background: "#22D3C0", color: "#06110F" }}
+              >
+                {waLoading ? "Generando código..." : "Conectar WhatsApp"}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {tab === "escrito" && (
         <div className="px-5 pt-4">

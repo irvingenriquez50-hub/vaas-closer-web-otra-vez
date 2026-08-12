@@ -40,21 +40,15 @@ export async function savePricing(targetUserId, tiers) {
 
 export async function addLead(targetUserId, phoneRaw) {
   const userId = await resolveTargetUserId(targetUserId);
-  const digits = (phoneRaw || "").replace(/[^0-9]/g, "");
-  if (!digits) return { error: "Número inválido." };
-  const jid = `${digits}@s.whatsapp.net`;
-  const supabase = createClient();
+  if (!phoneRaw?.trim()) return { error: "Número inválido." };
 
-  const { data: existing } = await supabase
-    .from("leads")
-    .select("id,status")
-    .eq("user_id", userId)
-    .eq("jid", jid)
-    .maybeSingle();
-
-  if (existing) return { error: `Este número ya está en proceso (${existing.status}).` };
-
-  await supabase.from("leads").insert({ user_id: userId, phone: phoneRaw.trim(), jid, status: "nuevo" });
+  const res = await fetch(`${process.env.BOT_ENGINE_URL}/add-lead/${userId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone: phoneRaw }),
+  });
+  const data = await res.json();
+  if (!data.ok) return { error: data.error || "No se pudo agregar el número." };
   revalidatePath("/dashboard");
   return { ok: true };
 }
