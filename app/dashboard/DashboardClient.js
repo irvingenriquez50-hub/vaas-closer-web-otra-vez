@@ -21,12 +21,11 @@ function defaultTiers() {
 
 function normalizePhoneForCountry(raw, country) {
   const digits = (raw || "").replace(/[^0-9]/g, "");
-  if (country === "other") return digits; // sin modificar — el usuario ya puso el código completo
+  if (country === "other") return digits;
   if (country === "us") {
     if (digits.length === 10) return "1" + digits;
     return digits;
   }
-  // china
   if (digits.length === 11 && !digits.startsWith("86")) return "86" + digits;
   return digits;
 }
@@ -77,13 +76,11 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   const [pending, startTransition] = useTransition();
 
   const [waConnected, setWaConnected] = useState(false);
-  const [waQr, setWaQr] = useState(null);
   const [waLoading, setWaLoading] = useState(false);
 
   const checkWaStatus = useCallback(async () => {
     const res = await whatsappStatus(targetUserId);
     setWaConnected(!!res.connected);
-    setWaQr(res.qrDataUrl || null);
   }, [targetUserId]);
 
   useEffect(() => {
@@ -100,7 +97,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   };
 
   const doResetWhatsapp = async () => {
-    if (!confirm("Esto borra la sesión actual y genera un QR nuevo. Tu WhatsApp se va a desvincular y hay que volver a escanear. ¿Seguro?")) return;
+    if (!confirm("Esto refresca la conexión con tu número de WhatsApp Business. ¿Seguro?")) return;
     setWaLoading(true);
     await resetWhatsapp(targetUserId);
     await checkWaStatus();
@@ -191,20 +188,13 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
             <div className="w-full rounded-xl p-6" style={{ background: "#141B24", border: "1px solid #34D399" }}>
               <div style={{ fontSize: 15, fontWeight: 600, color: "#34D399" }}>WhatsApp conectado ✓</div>
               <div style={{ fontSize: 12, color: "#8B96A5", marginTop: 6 }}>
-                Tu bot ya puede mandar y recibir mensajes. No cierres sesión desde tu teléfono o se desconecta.
+                Tu bot ya puede mandar y recibir mensajes en tu número. Sigues usando WhatsApp normal en tu teléfono sin problema.
               </div>
-            </div>
-          ) : waQr ? (
-            <div className="w-full rounded-xl p-5" style={{ background: "#141B24", border: "1px solid #232D3A" }}>
-              <div style={{ fontSize: 13, color: "#8B96A5", marginBottom: 12 }}>
-                Escanea con el WhatsApp de tu número dedicado: Ajustes → Dispositivos vinculados → Vincular un dispositivo
-              </div>
-              <img src={waQr} alt="Código QR de WhatsApp" style={{ width: "100%", maxWidth: 260, margin: "0 auto", borderRadius: 12 }} />
             </div>
           ) : (
             <div className="w-full rounded-xl p-6" style={{ background: "#141B24", border: "1px solid #232D3A" }}>
               <div style={{ fontSize: 13, color: "#8B96A5", marginBottom: 14 }}>
-                Aún no has conectado tu WhatsApp. Necesitas un número dedicado (no tu número personal).
+                Tu número de WhatsApp Business todavía no está activo en el sistema.
               </div>
               <button
                 onClick={doConnectWhatsapp}
@@ -212,7 +202,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                 className="px-4 py-2.5 rounded-xl font-semibold text-sm"
                 style={{ background: "#22D3C0", color: "#06110F" }}
               >
-                {waLoading ? "Generando código..." : "Conectar WhatsApp"}
+                {waLoading ? "Activando..." : "Activar WhatsApp"}
               </button>
             </div>
           )}
@@ -223,7 +213,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
               className="mt-4 text-xs"
               style={{ color: "#8B96A5", textDecoration: "underline" }}
             >
-              {waConnected ? "¿Problemas? Reiniciar conexión (nuevo QR)" : "¿No conecta? Reiniciar sesión desde cero"}
+              ¿Problemas? Refrescar conexión
             </button>
           )}
         </div>
