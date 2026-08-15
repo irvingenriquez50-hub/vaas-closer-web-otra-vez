@@ -9,8 +9,6 @@ async function resolveTargetUserId(requestedId) {
   } = await supabase.auth.getUser();
   if (!user) throw new Error("No autenticado");
 
-  // Only allow operating on someone else's data if the caller is the admin —
-  // enforced again at the database level by RLS regardless of what happens here.
   if (requestedId && requestedId !== user.id) {
     if (user.email !== process.env.NEXT_PUBLIC_ADMIN_EMAIL) throw new Error("No autorizado");
     return requestedId;
@@ -32,6 +30,7 @@ export async function savePricing(targetUserId, tiers) {
     user_id: userId,
     videos: t.videos,
     anchor: t.anchor,
+    medio: t.medio ?? null,
     floor: t.floor,
   }));
   await supabase.from("pricing_tiers").upsert(rows, { onConflict: "user_id,videos" });
