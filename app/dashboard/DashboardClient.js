@@ -425,7 +425,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
               }
               title="Toca para cambiar el país — se agrega el código automático"
             >
-              {addCountry === "us" ? "🇺🇸 US" : addCountry === "other" ? "🌐 Otro" : "🇨🇳 CN"}
+              {addCountry === "us" ? "🇺 US" : addCountry === "other" ? "🌐 Otro" : "🇨🇳 CN"}
             </button>
             <button onClick={doAddLead} className="px-4 rounded-xl text-sm font-semibold" style={{ background: "#22D3C0", color: "#06110F" }}>
               Agregar
@@ -466,7 +466,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div style={{ fontFamily: F_MONO, fontSize: 14, fontWeight: 600 }}>{lead.phone}</div>
-                      
+                      <a
                         href={waLink(lead.phone)}
                         target="_blank"
                         rel="noopener noreferrer"
