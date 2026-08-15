@@ -1,7 +1,7 @@
 "use client";
 import { useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { approveUser, renewUser, deactivateUser } from "./actions";
+import { approveUser, renewUser, deactivateUser, saveWhatsappChannel } from "./actions";
 
 function daysLeft(expiresAt) {
   if (!expiresAt) return null;
@@ -9,22 +9,39 @@ function daysLeft(expiresAt) {
   return Math.ceil(ms / (24 * 60 * 60 * 1000));
 }
 
-export default function AdminClient({ users, sessions }) {
+export default function AdminClient({ users, sessions, channels }) {
   const [tab, setTab] = useState("pendientes");
   const [pending, startTransition] = useTransition();
+  const [apiKeyDrafts, setApiKeyDrafts] = useState({});
+  const [phoneDrafts, setPhoneDrafts] = useState({});
+  const [savedFlash, setSavedFlash] = useState({});
 
   const sessionFor = (userId) => sessions.find((s) => s.user_id === userId);
+  const channelFor = (userId) => channels.find((c) => c.user_id === userId);
 
   const pendientes = users.filter((u) => u.status === "pending");
   const activos = users.filter((u) => u.status === "active");
   const vencidos = users.filter((u) => u.status === "expired");
 
   const F_DISPLAY = "'Space Grotesk', sans-serif";
+  const F_MONO = "'IBM Plex Mono', monospace";
 
   const signOut = async () => {
     const supabase = createClient();
     await supabase.auth.signOut();
     window.location.href = "/login";
+  };
+
+  const doSaveChannel = (userId) => {
+    const apiKey = apiKeyDrafts[userId] || "";
+    const phone = phoneDrafts[userId] || "";
+    if (!apiKey.trim() || !phone.trim()) return;
+    startTransition(async () => {
+      await saveWhatsappChannel(userId, apiKey, phone);
+      setSavedFlash((f) => ({ ...f, [userId]: true }));
+      setApiKeyDrafts((d) => ({ ...d, [userId]: "" }));
+      setTimeout(() => setSavedFlash((f) => ({ ...f, [userId]: false })), 3000);
+    });
   };
 
   const list = tab === "pendientes" ? pendientes : tab === "activos" ? activos : vencidos;
@@ -63,7 +80,10 @@ export default function AdminClient({ users, sessions }) {
         )}
         {list.map((u) => {
           const session = sessionFor(u.id);
+          const channel = channelFor(u.id);
           const dLeft = daysLeft(u.expires_at);
+          const hasChannel = !!channel?.d360_api_key;
+
           return (
             <div key={u.id} className="rounded-xl p-4" style={{ background: "#141B24", border: "1px solid #232D3A" }}>
               <div className="flex items-start justify-between">
@@ -129,6 +149,45 @@ export default function AdminClient({ users, sessions }) {
                   )}
                 </div>
               </div>
+
+              {tab === "activos" && (
+                <div className="mt-3 pt-3" style={{ borderTop: "1px solid #232D3A" }}>
+                  <div style={{ fontSize: 11, color: "#8B96A5", marginBottom: 6 }}>
+                    WhatsApp Business — 360dialog
+                    {hasChannel && (
+                      <span style={{ color: "#34D399", marginLeft: 6 }}>
+                        ✓ {channel.phone_number}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Número (ej. 13463207120)"
+                      value={phoneDrafts[u.id] ?? channel?.phone_number ?? ""}
+                      onChange={(e) => setPhoneDrafts((d) => ({ ...d, [u.id]: e.target.value }))}
+                      className="rounded-lg px-2.5 py-1.5 text-xs outline-none"
+                      style={{ width: 160, background: "#0B0E14", border: "1px solid #232D3A", color: "#EDEFF2", fontFamily: F_MONO }}
+                    />
+                    <input
+                      type="password"
+                      placeholder="API Key de 360dialog"
+                      value={apiKeyDrafts[u.id] ?? ""}
+                      onChange={(e) => setApiKeyDrafts((d) => ({ ...d, [u.id]: e.target.value }))}
+                      className="flex-1 rounded-lg px-2.5 py-1.5 text-xs outline-none"
+                      style={{ background: "#0B0E14", border: "1px solid #232D3A", color: "#EDEFF2", fontFamily: F_MONO }}
+                    />
+                    <button
+                      onClick={() => doSaveChannel(u.id)}
+                      disabled={pending}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap"
+                      style={{ background: savedFlash[u.id] ? "#34D399" : "#22D3C0", color: "#06110F" }}
+                    >
+                      {savedFlash[u.id] ? "Guardado ✓" : "Guardar"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
