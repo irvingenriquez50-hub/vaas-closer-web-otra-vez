@@ -47,28 +47,29 @@ const DEFAULT_SCRIPT = `• FROM THE VAAS COMMUNITY •
 
 I would love to work with your brand!
 
-I've helped multiple brands generate millions of views and over $(GMV) GMV within the Spanish-speaking U.S. audience.
+I've helped multiple brands generate millions of views and over $\{\{1\}\} GMV within the {{2}} U.S. audience.
 
 To keep quality high and give each video the time needed to create the best possible content, I only work through retainers. All packages include ad usage rights unless otherwise discussed.
 
-(TU NOMBRE) — RATES
+{{3}} — RATES
 
-1x Video — $000 per video
+1x Video — $\{\{4\}\} per video
 
-5x Videos/Month — $0,000 (10% discount applied)
+5x Videos/Month — $\{\{5\}\}
+(10% discount applied)
 
-10x Videos/Month — $0,000 (20% discount applied)
+10x Videos/Month — $\{\{6\}\}
+(20% discount applied)
 
 If this aligns with what you're looking for, I'd be happy to lock in a slot this week and start brainstorming content ideas tailored specifically to your brand.
 
 Looking forward to working together,
-(TU NOMBRE COMPLETO)
 
-Lifetime GMV: $(GMV)
-Last 30 Days GMV: $(GMV)
+Last 30 Days GMV: $\{\{7\}\} USD
 
-WHATSAPP NUMBER: (TU NÚMERO)
-My TikTok Account: @(TU CUENTA DE TIKTOK)`;
+My TikTok Account: @{{8}}
+
+— The VAAS Community`;
 
 export default function DashboardClient({ targetUserId, isAdminView, profile, initialTiers, initialScript, initialLeads }) {
   const [tab, setTab] = useState("escrito");
@@ -88,7 +89,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
 
   const [leads, setLeads] = useState(initialLeads || []);
   const [phoneInput, setPhoneInput] = useState("");
-  const [addCountry, setAddCountry] = useState("china");
+  const [addCountry, setAddCountry] = useState("other");
   const [leadError, setLeadError] = useState("");
   const [pending, startTransition] = useTransition();
 
@@ -291,7 +292,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
       {tab === "escrito" && (
         <div className="px-5 pt-4">
           <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 8 }}>
-            Mensaje 1 — esto es lo primero que manda el bot a cada número nuevo. Reemplaza los placeholders con tus datos reales.
+            Mensaje 1 — esto es lo primero que manda el bot a cada número nuevo. Reemplaza los placeholders {"{{1}}"} a {"{{8}}"} con tus datos reales.
           </div>
           <textarea
             value={script}
@@ -414,7 +415,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
               />
             </div>
             <button
-              onClick={() => setAddCountry((c) => (c === "china" ? "us" : c === "us" ? "other" : "china"))}
+              onClick={() => setAddCountry((c) => (c === "other" ? "china" : c === "china" ? "us" : "other"))}
               className="px-3 rounded-xl text-xs font-semibold"
               style={
                 addCountry === "us"
@@ -425,7 +426,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
               }
               title="Toca para cambiar el país — se agrega el código automático"
             >
-              {addCountry === "us" ? "🇺 US" : addCountry === "other" ? "🌐 Otro" : "🇨🇳 CN"}
+              {addCountry === "us" ? "US" : addCountry === "other" ? "Otro" : "CN"}
             </button>
             <button onClick={doAddLead} className="px-4 rounded-xl text-sm font-semibold" style={{ background: "#22D3C0", color: "#06110F" }}>
               Agregar
