@@ -1,7 +1,7 @@
 "use client";
 import { useState, useTransition, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, removeLead } from "./actions";
+import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, removeLead, restartLead, resolveLeadManually } from "./actions";
 import { connectWhatsapp, whatsappStatus, resetWhatsapp } from "./whatsapp-actions";
 
 const TIERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 30];
@@ -36,6 +36,11 @@ function normalizePhoneForCountry(raw, country) {
   }
   if (digits.length === 11 && !digits.startsWith("86")) return "86" + digits;
   return digits;
+}
+
+function waLink(phone) {
+  const digits = (phone || "").replace(/[^0-9]/g, "");
+  return `https://wa.me/${digits}`;
 }
 
 const DEFAULT_SCRIPT = `• FROM THE VAAS COMMUNITY •
@@ -174,6 +179,17 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
         setLeads((l) => [{ id: crypto.randomUUID(), phone: normalized, status: manualFirstMessage ? "esperando" : "nuevo", timezone: addCountry, paused: false, updated_at: new Date().toISOString() }, ...l]);
       }
     });
+  };
+
+  const doRestartLead = (leadId) => {
+    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, status: "nuevo", paused: false } : l)));
+    startTransition(() => restartLead(targetUserId, leadId));
+  };
+
+  const doResolveLead = (leadId) => {
+    if (!confirm("Esto archiva el contacto sin reportarlo a tu Retainer Tracker. ¿Seguro?")) return;
+    setLeads((prev) => prev.filter((l) => l.id !== leadId));
+    startTransition(() => resolveLeadManually(targetUserId, leadId));
   };
 
   const signOut = async () => {
@@ -437,22 +453,63 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
             )}
             {leads.map((lead) => {
               const idx = stageIndex(lead.status);
+              const isCross = lead.status === "cruzado";
               return (
-                <div key={lead.id} className="rounded-xl p-4" style={{ background: "#141B24", border: lead.paused ? "1px solid #F2B84B" : "1px solid #232D3A" }}>
+                <div
+                  key={lead.id}
+                  className="rounded-xl p-4"
+                  style={{
+                    background: "#141B24",
+                    border: isCross ? "1px solid #F2B84B" : lead.paused ? "1px solid #F2B84B" : "1px solid #232D3A",
+                  }}
+                >
                   <div className="flex items-center justify-between">
-                    <div style={{ fontFamily: F_MONO, fontSize: 14, fontWeight: 600 }}>{lead.phone}</div>
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={() => {
-                          const next = !lead.paused;
-                          setLeads((prev) => prev.map((l) => (l.id === lead.id ? { ...l, paused: next } : l)));
-                          startTransition(() => toggleLeadPause(targetUserId, lead.id, next));
-                        }}
-                        className="px-2 py-1 rounded-lg text-[10px] font-medium"
-                        style={{ background: lead.paused ? "#F2B84B22" : "#1B2430", color: lead.paused ? "#F2B84B" : "#8B96A5" }}
+                    <div className="flex items-center gap-2">
+                      <div style={{ fontFamily: F_MONO, fontSize: 14, fontWeight: 600 }}>{lead.phone}</div>
+                      
+                        href={waLink(lead.phone)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-1.5 py-0.5 rounded-md text-[10px] font-medium"
+                        style={{ background: "#25D36622", color: "#25D366" }}
+                        title="Abrir conversación en WhatsApp"
                       >
-                        {lead.paused ? "Pausado" : "Pausar"}
-                      </button>
+                        WhatsApp ↗
+                      </a>
+                    </div>
+                    <div className="flex gap-1.5 flex-wrap justify-end">
+                      {isCross ? (
+                        <>
+                          <button
+                            onClick={() => doRestartLead(lead.id)}
+                            className="px-2 py-1 rounded-lg text-[10px] font-medium"
+                            style={{ background: "#22D3C022", color: "#22D3C0" }}
+                            title="Nunca se cerró nada — reinicia y manda el escrito otra vez"
+                          >
+                            Reiniciar
+                          </button>
+                          <button
+                            onClick={() => doResolveLead(lead.id)}
+                            className="px-2 py-1 rounded-lg text-[10px] font-medium"
+                            style={{ background: "#34D39922", color: "#34D399" }}
+                            title="Ya hubo un deal — archiva sin reportar al tracker"
+                          >
+                            Marcar resuelto
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            const next = !lead.paused;
+                            setLeads((prev) => prev.map((l) => (l.id === lead.id ? { ...l, paused: next } : l)));
+                            startTransition(() => toggleLeadPause(targetUserId, lead.id, next));
+                          }}
+                          className="px-2 py-1 rounded-lg text-[10px] font-medium"
+                          style={{ background: lead.paused ? "#F2B84B22" : "#1B2430", color: lead.paused ? "#F2B84B" : "#8B96A5" }}
+                        >
+                          {lead.paused ? "Pausado" : "Pausar"}
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           setLeads((prev) => prev.filter((l) => l.id !== lead.id));
@@ -465,30 +522,38 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                       </button>
                     </div>
                   </div>
-                  <div className="mt-3 flex items-center">
-                    {STAGES.map((s, i) => (
-                      <div key={s.key} className="flex items-center flex-1">
-                        <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: i <= idx ? (s.key === "cerrado" ? "#34D399" : "#22D3C0") : "#232D3A" }} title={s.label} />
-                        {i < STAGES.length - 1 && <div className="flex-1 h-[2px]" style={{ background: i < idx ? "#22D3C0" : "#232D3A" }} />}
+                  {isCross ? (
+                    <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#F2B84B15", color: "#F2B84B" }}>
+                      ⚠️ Colaboración cruzada — este número ya tiene historial con otro miembro. Revisa el WhatsApp antes de decidir.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mt-3 flex items-center">
+                        {STAGES.map((s, i) => (
+                          <div key={s.key} className="flex items-center flex-1">
+                            <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: i <= idx ? (s.key === "cerrado" ? "#34D399" : "#22D3C0") : "#232D3A" }} title={s.label} />
+                            {i < STAGES.length - 1 && <div className="flex-1 h-[2px]" style={{ background: i < idx ? "#22D3C0" : "#232D3A" }} />}
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                  <div className="flex items-center justify-between mt-1.5">
-                    <span style={{ fontSize: 11, color: "#8B96A5" }}>{STAGES[idx].label}</span>
-                    {idx < STAGES.length - 1 && (
-                      <button
-                        onClick={() => {
-                          const nextKey = STAGES[idx + 1].key;
-                          setLeads((prev) => prev.map((l) => (l.id === lead.id ? { ...l, status: nextKey } : l)));
-                          startTransition(() => updateLeadStatus(targetUserId, lead.id, nextKey));
-                        }}
-                        className="text-[11px] font-medium"
-                        style={{ color: "#22D3C0" }}
-                      >
-                        Marcar {STAGES[idx + 1].label} →
-                      </button>
-                    )}
-                  </div>
+                      <div className="flex items-center justify-between mt-1.5">
+                        <span style={{ fontSize: 11, color: "#8B96A5" }}>{STAGES[idx].label}</span>
+                        {idx < STAGES.length - 1 && (
+                          <button
+                            onClick={() => {
+                              const nextKey = STAGES[idx + 1].key;
+                              setLeads((prev) => prev.map((l) => (l.id === lead.id ? { ...l, status: nextKey } : l)));
+                              startTransition(() => updateLeadStatus(targetUserId, lead.id, nextKey));
+                            }}
+                            className="text-[11px] font-medium"
+                            style={{ color: "#22D3C0" }}
+                          >
+                            Marcar {STAGES[idx + 1].label} →
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })}
