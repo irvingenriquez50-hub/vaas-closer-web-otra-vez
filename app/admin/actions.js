@@ -44,14 +44,18 @@ export async function saveAdminNote(userId, notes) {
   revalidatePath("/admin");
 }
 
-// Guarda (o actualiza) la API key de 360dialog y el número de un miembro —
-// esto es lo único que hace falta para que su WhatsApp quede activo, sin tocar SQL.
+// Guarda (o actualiza) la API key de 360dialog y el número de un miembro.
 export async function saveWhatsappChannel(userId, apiKey, phoneNumber) {
   const supabase = await requireAdmin();
-  await supabase.from("whatsapp_channels").upsert({
+  const { error } = await supabase.from("whatsapp_channels").upsert({
     user_id: userId,
     d360_api_key: apiKey.trim(),
     phone_number: phoneNumber.trim(),
   });
+  if (error) {
+    console.error("Error guardando whatsapp_channel:", error);
+    return { error: error.message };
+  }
   revalidatePath("/admin");
+  return { ok: true };
 }
