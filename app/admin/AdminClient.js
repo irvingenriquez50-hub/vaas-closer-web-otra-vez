@@ -33,13 +33,13 @@ export default function AdminClient({ users, sessions, channels }) {
   };
 
   const doSaveChannel = (userId) => {
-    const apiKey = apiKeyDrafts[userId] || "";
-    const phone = phoneDrafts[userId] || "";
+    const channel = channelFor(userId);
+    const apiKey = apiKeyDrafts[userId] ?? channel?.d360_api_key ?? "";
+    const phone = phoneDrafts[userId] ?? channel?.phone_number ?? "";
     if (!apiKey.trim() || !phone.trim()) return;
     startTransition(async () => {
       await saveWhatsappChannel(userId, apiKey, phone);
       setSavedFlash((f) => ({ ...f, [userId]: true }));
-      setApiKeyDrafts((d) => ({ ...d, [userId]: "" }));
       setTimeout(() => setSavedFlash((f) => ({ ...f, [userId]: false })), 3000);
     });
   };
@@ -170,9 +170,9 @@ export default function AdminClient({ users, sessions, channels }) {
                       style={{ width: 160, background: "#0B0E14", border: "1px solid #232D3A", color: "#EDEFF2", fontFamily: F_MONO }}
                     />
                     <input
-                      type="password"
+                      type="text"
                       placeholder="API Key de 360dialog"
-                      value={apiKeyDrafts[u.id] ?? ""}
+                      value={apiKeyDrafts[u.id] ?? channel?.d360_api_key ?? ""}
                       onChange={(e) => setApiKeyDrafts((d) => ({ ...d, [u.id]: e.target.value }))}
                       className="flex-1 rounded-lg px-2.5 py-1.5 text-xs outline-none"
                       style={{ background: "#0B0E14", border: "1px solid #232D3A", color: "#EDEFF2", fontFamily: F_MONO }}
