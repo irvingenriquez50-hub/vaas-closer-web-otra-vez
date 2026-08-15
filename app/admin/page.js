@@ -12,6 +12,7 @@ export default async function AdminPage() {
 
   const { data: users } = await supabase.from("users").select("*").order("created_at", { ascending: false });
   const { data: sessions } = await supabase.from("bot_sessions").select("*");
+  const { data: channels } = await supabase.from("whatsapp_channels").select("*");
 
-  return <AdminClient users={users || []} sessions={sessions || []} />;
+  return <AdminClient users={users || []} sessions={sessions || []} channels={channels || []} />;
 }
