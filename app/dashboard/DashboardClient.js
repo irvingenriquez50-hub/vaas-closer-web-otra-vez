@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/client";
 import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, removeLead } from "./actions";
 import { connectWhatsapp, whatsappStatus, resetWhatsapp } from "./whatsapp-actions";
 
-const TIERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30];
+const TIERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 30];
 const STAGES = [
   { key: "nuevo", label: "Nuevo" },
   { key: "escrito_enviado", label: "Escrito enviado" },
@@ -15,18 +15,25 @@ const STAGES = [
 ];
 const stageIndex = (key) => Math.max(0, STAGES.findIndex((s) => s.key === key));
 
+const PRICE_TABLES = {
+  500: { 1:[500,450,400],2:[1000,900,800],3:[1500,1350,1200],4:[2050,1800,1600],5:[2250,2100,1900],6:[2700,2550,2400],7:[3150,2950,2800],8:[3600,3400,3200],9:[4050,3850,3600],10:[4000,3750,3500],15:[5250,4850,4500],20:[7000,6500,6000],30:[9000,8250,7500] },
+  450: { 1:[450,400,350],2:[900,800,700],3:[1350,1200,1050],4:[1800,1600,1400],5:[2050,1800,1600],6:[2450,2200,1900],7:[2850,2550,2250],8:[3300,2950,2550],9:[3700,3300,2900],10:[3600,3350,3000],15:[5000,4500,4000],20:[6300,5650,5000],30:[7650,7200,6700] },
+  400: { 1:[400,350,300],2:[800,700,600],3:[1200,1050,900],4:[1600,1400,1200],5:[1800,1600,1400],6:[2150,1950,1700],7:[2500,2250,1950],8:[2900,2600,2250],9:[3250,2900,2550],10:[3200,2850,2500],15:[4500,4150,3800],20:[5600,5000,4400],30:[7000,6500,6000] },
+  350: { 1:[350,300,250],2:[700,600,500],3:[1050,900,750],4:[1400,1200,1000],5:[1600,1450,1250],6:[1900,1700,1500],7:[2250,2000,1750],8:[2550,2300,2000],9:[2900,2600,2250],10:[2800,2550,2300],15:[3950,3500,3000],20:[4900,4450,4000],30:[6600,6200,5800] },
+  300: { 1:[300,250,200],2:[600,500,400],3:[900,750,600],4:[1200,1000,800],5:[1350,1200,1000],6:[1600,1400,1200],7:[1900,1650,1400],8:[2150,1900,1600],9:[2450,2150,1800],10:[2500,2250,2000],15:[3400,3100,2800],20:[4200,3900,3600],30:[6300,5850,5400] },
+};
+
 function defaultTiers() {
-  return TIERS.map((n) => ({ videos: n, anchor: n === 1 ? 300 : 300 * n, floor: n === 1 ? 200 : 200 * n }));
+  return TIERS.map((n) => ({ videos: n, anchor: n === 1 ? 300 : 300 * n, medio: n === 1 ? 250 : 250 * n, floor: n === 1 ? 200 : 200 * n }));
 }
 
 function normalizePhoneForCountry(raw, country) {
   const digits = (raw || "").replace(/[^0-9]/g, "");
-  if (country === "other") return digits; // sin modificar — el usuario ya puso el código completo
+  if (country === "other") return digits;
   if (country === "us") {
     if (digits.length === 10) return "1" + digits;
     return digits;
   }
-  // china
   if (digits.length === 11 && !digits.startsWith("86")) return "86" + digits;
   return digits;
 }
@@ -65,10 +72,14 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
 
   const mergedTiers = defaultTiers().map((d) => {
     const found = (initialTiers || []).find((t) => t.videos === d.videos);
-    return found ? { videos: d.videos, anchor: Number(found.anchor), floor: Number(found.floor) } : d;
+    return found
+      ? { videos: d.videos, anchor: Number(found.anchor), medio: found.medio != null ? Number(found.medio) : d.medio, floor: Number(found.floor) }
+      : d;
   });
   const [tiers, setTiers] = useState(mergedTiers);
   const [tiersSaved, setTiersSaved] = useState(true);
+  const [pricePerVideo, setPricePerVideo] = useState("");
+  const [tableUpdated, setTableUpdated] = useState(false);
 
   const [leads, setLeads] = useState(initialLeads || []);
   const [phoneInput, setPhoneInput] = useState("");
@@ -79,7 +90,6 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   const [waConnected, setWaConnected] = useState(false);
   const [waQr, setWaQr] = useState(null);
   const [waLoading, setWaLoading] = useState(false);
-
   const [waError, setWaError] = useState("");
 
   const checkWaStatus = useCallback(async () => {
@@ -127,6 +137,26 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
       await savePricing(targetUserId, tiers);
       setTiersSaved(true);
     });
+  };
+
+  const applyPriceTable = () => {
+    const price = Number(pricePerVideo);
+    if (!price) return;
+    const availableTiers = Object.keys(PRICE_TABLES).map(Number);
+    const closest = availableTiers.reduce((prev, curr) =>
+      Math.abs(curr - price) < Math.abs(prev - price) ? curr : prev
+    );
+    const table = PRICE_TABLES[closest];
+    const updated = tiers.map((t) => {
+      const row = table[t.videos];
+      if (!row) return t;
+      const [anchor, medio, floor] = row;
+      return { ...t, anchor, medio, floor };
+    });
+    setTiers(updated);
+    setTiersSaved(false);
+    setTableUpdated(true);
+    setTimeout(() => setTableUpdated(false), 2500);
   };
 
   const [manualFirstMessage, setManualFirstMessage] = useState(false);
@@ -267,15 +297,42 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
 
       {tab === "precios" && (
         <div className="px-5 pt-4">
-          <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 10 }}>Tu ancla y tu piso, paquete por paquete:</div>
+          <div className="rounded-xl p-4 mb-4" style={{ background: "#141B24", border: "1px solid #22D3C0" }}>
+            <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 8 }}>
+              Precio por video — al actualizar, se rellena toda la tabla de abajo automáticamente (todavía no se guarda, tienes que darle "Guardar precios" después).
+            </div>
+            <div className="flex gap-2">
+              <div className="flex-1 flex items-center rounded-lg px-2.5" style={{ background: "#0B0E14", border: "1px solid #232D3A" }}>
+                <span style={{ fontSize: 13, color: "#8B96A5" }}>$</span>
+                <input
+                  type="number"
+                  value={pricePerVideo}
+                  onChange={(e) => setPricePerVideo(e.target.value)}
+                  placeholder="ej. 450"
+                  className="bg-transparent outline-none flex-1 px-1.5 py-2 text-sm"
+                  style={{ color: "#EDEFF2", fontFamily: F_MONO }}
+                />
+                <span style={{ fontSize: 11, color: "#8B96A5" }}>por video</span>
+              </div>
+              <button
+                onClick={applyPriceTable}
+                className="px-4 rounded-lg text-sm font-semibold whitespace-nowrap"
+                style={{ background: tableUpdated ? "#34D399" : "#22D3C0", color: "#06110F" }}
+              >
+                {tableUpdated ? "Actualizado ✓" : "Actualizar tabla"}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 10 }}>Tu ancla, medio y piso, paquete por paquete:</div>
           <div className="flex flex-col gap-2 mb-3">
             {tiers.map((t, i) => (
-              <div key={t.videos} className="flex items-center gap-2.5">
+              <div key={t.videos} className="flex items-center gap-2 flex-wrap">
                 <div className="px-2.5 py-1.5 rounded-lg text-xs font-medium" style={{ width: 62, background: "#141B24", border: "1px solid #232D3A", color: "#8B96A5" }}>
                   {t.videos} vid{t.videos === 1 ? "" : "s"}
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span style={{ fontSize: 11, color: "#8B96A5" }}>ancla $</span>
+                  <span style={{ fontSize: 11, color: "#8B96A5" }}>alto $</span>
                   <input
                     type="number"
                     value={t.anchor}
@@ -284,7 +341,20 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                       setTiers((prev) => prev.map((p, idx) => (idx === i ? { ...p, anchor: v } : p)));
                       setTiersSaved(false);
                     }}
-                    style={{ width: 72, background: "#141B24", border: "1px solid #232D3A", borderRadius: 8, padding: "5px 8px", fontFamily: F_MONO, fontSize: 13, color: "#F2B84B" }}
+                    style={{ width: 68, background: "#0B0E14", border: "1px solid #232D3A", borderRadius: 8, padding: "5px 6px", fontFamily: F_MONO, fontSize: 12, color: "#F2B84B" }}
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span style={{ fontSize: 11, color: "#8B96A5" }}>medio $</span>
+                  <input
+                    type="number"
+                    value={t.medio ?? ""}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setTiers((prev) => prev.map((p, idx) => (idx === i ? { ...p, medio: v } : p)));
+                      setTiersSaved(false);
+                    }}
+                    style={{ width: 68, background: "#0B0E14", border: "1px solid #232D3A", borderRadius: 8, padding: "5px 6px", fontFamily: F_MONO, fontSize: 12, color: "#8AB4F8" }}
                   />
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -297,7 +367,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                       setTiers((prev) => prev.map((p, idx) => (idx === i ? { ...p, floor: v } : p)));
                       setTiersSaved(false);
                     }}
-                    style={{ width: 72, background: "#141B24", border: "1px solid #232D3A", borderRadius: 8, padding: "5px 8px", fontFamily: F_MONO, fontSize: 13, color: "#34D399" }}
+                    style={{ width: 68, background: "#0B0E14", border: "1px solid #232D3A", borderRadius: 8, padding: "5px 6px", fontFamily: F_MONO, fontSize: 12, color: "#34D399" }}
                   />
                 </div>
               </div>
