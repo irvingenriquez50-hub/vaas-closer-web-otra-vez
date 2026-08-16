@@ -3,7 +3,7 @@ import { useState, useTransition, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, removeLead, restartLead, resolveLeadManually } from "./actions";
 import { connectWhatsapp, whatsappStatus, resetWhatsapp } from "./whatsapp-actions";
-import { getDiscordCalendar, importDay, listLeadRequests, activateLeadRequest, rejectLeadRequest } from "./discord-actions";
+import { getDiscordCalendar, importDay, listLeadRequests, activateLeadRequest, rejectLeadRequest, markOngoingRequest } from "./discord-actions";
 
 const TIERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 30];
 const STAGES = [
@@ -55,7 +55,7 @@ function groupByDate(requests) {
   return Object.entries(groups);
 }
 
-function RequestCard({ req, onActivate, onReject, F_MONO }) {
+function RequestCard({ req, onActivate, onReject, onOngoing, F_MONO }) {
   const [sent, setSent] = useState(false);
 
   return (
@@ -96,6 +96,14 @@ function RequestCard({ req, onActivate, onReject, F_MONO }) {
           style={{ background: "#34D399", color: "#06110F" }}
         >
           Empezar
+        </button>
+        <button
+          onClick={onOngoing}
+          className="px-3 py-2 rounded-lg text-xs font-semibold"
+          style={{ background: "#8AB4F822", color: "#8AB4F8" }}
+          title="Ya tengo colaboración con esta persona — no lo vuelvas a mostrar"
+        >
+          Ya tengo colab
         </button>
         <button
           onClick={onReject}
@@ -302,6 +310,11 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   const doRejectRequest = (reqId) => {
     setLeadRequests((prev) => prev.filter((r) => r.id !== reqId));
     startTransition(() => rejectLeadRequest(targetUserId, reqId));
+  };
+
+  const doOngoingRequest = (reqId) => {
+    setLeadRequests((prev) => prev.filter((r) => r.id !== reqId));
+    startTransition(() => markOngoingRequest(targetUserId, reqId));
   };
 
   const signOut = async () => {
@@ -743,6 +756,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                     req={req}
                     onActivate={() => doActivateRequest(req)}
                     onReject={() => doRejectRequest(req.id)}
+                    onOngoing={() => doOngoingRequest(req.id)}
                     F_MONO={F_MONO}
                   />
                 ))}
