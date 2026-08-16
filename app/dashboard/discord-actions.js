@@ -14,63 +14,55 @@ async function resolveTargetUserId(requestedId) {
   return user.id;
 }
 
-function rangeToSince(range) {
-  const now = new Date();
-  const map = {
-    "1d": 1,
-    "2d": 2,
-    "3d": 3,
-    "7d": 7,
-    "30d": 30,
-    "60d": 60,
-    "90d": 90,
-    "120d": 120,
-    "150d": 150,
-  };
-  const days = map[range] || 7;
-  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+// Trae el calendario: cuántos contactos hay por día, en los últimos 150 días.
+export async function getDiscordCalendar(targetUserId) {
+  await resolveTargetUserId(targetUserId);
+  const since = new Date(Date.now() - 150 * 24 * 60 * 60 * 1000);
+  const until = new Date();
+
+  const url = `${process.env.DISCORD_BOT_URL}/contacts-summary?channelId=${process.env.DISCORD_CHANNEL_ID}&since=${since.toISOString()}&until=${until.toISOString()}`;
+  const res = await fetch(url, { headers: { "x-import-secret": process.env.BOT_IMPORT_SECRET } });
+  const data = await res.json();
+  if (!data.ok) return [];
+  return data.summary;
 }
 
-export async function importFromDiscord(targetUserId, range) {
+// Importa (o re-importa) los contactos de UN día específico. Si algún contacto
+// ya estaba "rejected", lo regresa a "pending" — así se puede recuperar.
+// Los que ya están "activated" NUNCA se tocan.
+export async function importDay(targetUserId, dateStr) {
   const userId = await resolveTargetUserId(targetUserId);
   const supabase = createClient();
 
-  const since = rangeToSince(range);
-  const until = new Date();
+  const since = new Date(`${dateStr}T00:00:00.000Z`);
+  const until = new Date(`${dateStr}T23:59:59.999Z`);
 
   const url = `${process.env.DISCORD_BOT_URL}/contacts?channelId=${process.env.DISCORD_CHANNEL_ID}&since=${since.toISOString()}&until=${until.toISOString()}`;
-
-  const res = await fetch(url, {
-    headers: { "x-import-secret": process.env.BOT_IMPORT_SECRET },
-  });
+  const res = await fetch(url, { headers: { "x-import-secret": process.env.BOT_IMPORT_SECRET } });
   const data = await res.json();
   if (!data.ok) return { error: data.error || "No se pudo conectar con Discord." };
+  if (!data.contacts.length) return { ok: true, imported: 0 };
 
-  if (!data.contacts.length) {
-    return { ok: true, imported: 0 };
-  }
-
-  // Revisa cuáles de estos contactos YA existen en la lista de este miembro,
-  // para no duplicarlos — sin bloquear rangos más grandes en el futuro.
-  const { data: existing } = await supabase
+  const { data: existingRows } = await supabase
     .from("lead_requests")
-    .select("discord_message_id")
+    .select("discord_message_id,status")
     .eq("user_id", userId);
-  const existingIds = new Set((existing || []).map((r) => r.discord_message_id));
+  const existingMap = new Map((existingRows || []).map((r) => [r.discord_message_id, r.status]));
 
-  const newContacts = data.contacts.filter((c) => !existingIds.has(c.discord_message_key));
-  if (!newContacts.length) return { ok: true, imported: 0 };
-
-  // Revisa colaboración cruzada para cada contacto antes de insertarlo.
   const { data: allLeads } = await supabase.from("leads").select("user_id,phone").neq("user_id", userId);
 
-  const rows = newContacts.map((c) => {
+  let count = 0;
+  for (const c of data.contacts) {
+    const currentStatus = existingMap.get(c.discord_message_key);
+    if (currentStatus === "activated" || currentStatus === "pending") continue; // no tocar
+
     const digits = c.phone.replace(/[^0-9]/g, "");
     const cross = (allLeads || []).some((l) => {
       const leadDigits = (l.phone || "").replace(/[^0-9]/g, "");
       return leadDigits && digits.slice(-8) === leadDigits.slice(-8);
     });
-    return {
+
+    const row = {
       user_id: userId,
       discord_message_id: c.discord_message_key,
       phone: c.phone,
@@ -81,15 +73,12 @@ export async function importFromDiscord(targetUserId, range) {
       cross_member: cross,
       status: "pending",
     };
-  });
 
-  const { error } = await supabase.from("lead_requests").insert(rows);
-  if (error) {
-    console.error("Error guardando lead_requests:", error);
-    return { error: error.message };
+    await supabase.from("lead_requests").upsert(row, { onConflict: "user_id,discord_message_id" });
+    count += 1;
   }
 
-  return { ok: true, imported: rows.length };
+  return { ok: true, imported: count };
 }
 
 export async function listLeadRequests(targetUserId) {
