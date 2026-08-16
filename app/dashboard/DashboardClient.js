@@ -56,6 +56,17 @@ function waLink(phone) {
   return `https://wa.me/${digits}`;
 }
 
+function groupByDate(requests) {
+  const groups = {};
+  for (const req of requests) {
+    const d = req.message_created_at ? new Date(req.message_created_at) : new Date(req.created_at);
+    const label = d.toLocaleDateString("es-MX", { day: "numeric", month: "long", year: "numeric" });
+    if (!groups[label]) groups[label] = [];
+    groups[label].push(req);
+  }
+  return Object.entries(groups);
+}
+
 const DEFAULT_SCRIPT = `• FROM THE VAAS COMMUNITY •
 
 I would love to work with your brand!
@@ -111,7 +122,6 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   const [waLoading, setWaLoading] = useState(false);
   const [waError, setWaError] = useState("");
 
-  // ---- Revisión (Discord import) ----
   const [leadRequests, setLeadRequests] = useState([]);
   const [discordRange, setDiscordRange] = useState("7d");
   const [discordLoading, setDiscordLoading] = useState(false);
@@ -259,6 +269,8 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
 
   const F_DISPLAY = "'Space Grotesk', sans-serif";
   const F_MONO = "'IBM Plex Mono', monospace";
+
+  const groupedRequests = groupByDate(leadRequests);
 
   return (
     <div className="min-h-screen w-full pb-16" style={{ background: "#0B0E14", color: "#EDEFF2" }}>
@@ -625,7 +637,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
         <div className="px-5 pt-4">
           <div className="rounded-xl p-4 mb-4" style={{ background: "#141B24", border: "1px solid #22D3C0" }}>
             <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 8 }}>
-              Importa contactos del Discord. Solo trae los que no hayas importado antes.
+              Importa contactos del Discord. Se agrupan por fecha abajo.
             </div>
             <div className="flex gap-2 flex-wrap mb-2">
               {DISCORD_RANGES.map(([key, label]) => (
@@ -652,59 +664,67 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
             )}
           </div>
 
-          <div className="flex flex-col gap-3">
-            {leadRequests.length === 0 && (
-              <div className="text-sm text-center py-10" style={{ color: "#8B96A5" }}>
-                Nada por revisar todavía.
+          {leadRequests.length === 0 && (
+            <div className="text-sm text-center py-10" style={{ color: "#8B96A5" }}>
+              Nada por revisar todavía.
+            </div>
+          )}
+
+          {groupedRequests.map(([dateLabel, reqs]) => (
+            <div key={dateLabel} className="mb-5">
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#8AB4F8", marginBottom: 8, textTransform: "capitalize" }}>
+                {dateLabel}
               </div>
-            )}
-            {leadRequests.map((req) => (
-              <div
-                key={req.id}
-                className="rounded-xl p-4"
-                style={{ background: "#141B24", border: req.cross_member ? "1px solid #F2B84B" : "1px solid #232D3A" }}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div style={{ fontFamily: F_MONO, fontSize: 14, fontWeight: 600 }}>{req.phone}</div>
-                  <a
-                    href={waLink(req.phone)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-1.5 py-0.5 rounded-md text-[10px] font-medium"
-                    style={{ background: "#25D36622", color: "#25D366" }}
+              <div className="flex flex-col gap-3">
+                {reqs.map((req) => (
+                  <div
+                    key={req.id}
+                    className="rounded-xl p-4"
+                    style={{ background: "#141B24", border: req.cross_member ? "1px solid #F2B84B" : "1px solid #232D3A" }}
                   >
-                    WhatsApp ↗
-                  </a>
-                </div>
-                <div style={{ fontSize: 11, color: "#8B96A5", lineHeight: 1.6 }}>
-                  {req.product && <div>Producto: {req.product}</div>}
-                  {req.videos_text && <div>{req.videos_text}</div>}
-                  {req.price_text && <div>{req.price_text}</div>}
-                </div>
-                {req.cross_member && (
-                  <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#F2B84B15", color: "#F2B84B" }}>
-                    ⚠️ Ya tienes historial con este número en otro miembro.
+                    <div className="flex items-center justify-between mb-2">
+                      <div style={{ fontFamily: F_MONO, fontSize: 14, fontWeight: 600 }}>{req.phone}</div>
+                      <a
+                        href={waLink(req.phone)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-1.5 py-0.5 rounded-md text-[10px] font-medium"
+                        style={{ background: "#25D36622", color: "#25D366" }}
+                      >
+                        WhatsApp ↗
+                      </a>
+                    </div>
+                    <div style={{ fontSize: 11, color: "#8B96A5", lineHeight: 1.6 }}>
+                      {req.product && <div>Producto: {req.product}</div>}
+                      {req.videos_text && <div>{req.videos_text}</div>}
+                      {req.price_text && <div>{req.price_text}</div>}
+                    </div>
+                    {req.cross_member && (
+                      <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#F2B84B15", color: "#F2B84B" }}>
+                        ⚠️ Ya tienes historial con este número en otro miembro.
+                      </div>
+                    )}
+                    <div className="flex gap-2 mt-3">
+                      <button
+                        onClick={() => doActivateRequest(req)}
+                        className="flex-1 py-2 rounded-lg text-xs font-semibold"
+                        style={{ background: "#34D399", color: "#06110F" }}
+                      >
+                        Ya mandé el mensaje — Empezar
+                      </button>
+                      <button
+                        onClick={() => doRejectRequest(req.id)}
+                        className="px-3 py-2 rounded-lg text-xs font-semibold"
+                        style={{ background: "#2A1620", color: "#F19999" }}
+                      >
+                        Rechazar
+                      </button>
+                    </div>
                   </div>
-                )}
-                <div className="flex gap-2 mt-3">
-                  <button
-                    onClick={() => doActivateRequest(req)}
-                    className="flex-1 py-2 rounded-lg text-xs font-semibold"
-                    style={{ background: "#34D399", color: "#06110F" }}
-                  >
-                    Ya mandé el mensaje — Empezar
-                  </button>
-                  <button
-                    onClick={() => doRejectRequest(req.id)}
-                    className="px-3 py-2 rounded-lg text-xs font-semibold"
-                    style={{ background: "#2A1620", color: "#F19999" }}
-                  >
-                    Rechazar
-                  </button>
-                </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
