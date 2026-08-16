@@ -35,23 +35,10 @@ export async function importFromDiscord(targetUserId, range) {
   const userId = await resolveTargetUserId(targetUserId);
   const supabase = createClient();
 
-  const { data: lastImport } = await supabase
-    .from("discord_import_log")
-    .select("imported_until")
-    .eq("user_id", userId)
-    .order("imported_until", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const requestedSince = rangeToSince(range);
-  const effectiveSince =
-    lastImport?.imported_until && new Date(lastImport.imported_until) > requestedSince
-      ? new Date(lastImport.imported_until)
-      : requestedSince;
-
+  const since = rangeToSince(range);
   const until = new Date();
 
-  const url = `${process.env.DISCORD_BOT_URL}/contacts?channelId=${process.env.DISCORD_CHANNEL_ID}&since=${effectiveSince.toISOString()}&until=${until.toISOString()}`;
+  const url = `${process.env.DISCORD_BOT_URL}/contacts?channelId=${process.env.DISCORD_CHANNEL_ID}&since=${since.toISOString()}&until=${until.toISOString()}`;
 
   const res = await fetch(url, {
     headers: { "x-import-secret": process.env.BOT_IMPORT_SECRET },
@@ -60,13 +47,24 @@ export async function importFromDiscord(targetUserId, range) {
   if (!data.ok) return { error: data.error || "No se pudo conectar con Discord." };
 
   if (!data.contacts.length) {
-    await supabase.from("discord_import_log").insert({ user_id: userId, imported_until: until.toISOString() });
     return { ok: true, imported: 0 };
   }
 
+  // Revisa cuáles de estos contactos YA existen en la lista de este miembro,
+  // para no duplicarlos — sin bloquear rangos más grandes en el futuro.
+  const { data: existing } = await supabase
+    .from("lead_requests")
+    .select("discord_message_id")
+    .eq("user_id", userId);
+  const existingIds = new Set((existing || []).map((r) => r.discord_message_id));
+
+  const newContacts = data.contacts.filter((c) => !existingIds.has(c.discord_message_key));
+  if (!newContacts.length) return { ok: true, imported: 0 };
+
+  // Revisa colaboración cruzada para cada contacto antes de insertarlo.
   const { data: allLeads } = await supabase.from("leads").select("user_id,phone").neq("user_id", userId);
 
-  const rows = data.contacts.map((c) => {
+  const rows = newContacts.map((c) => {
     const digits = c.phone.replace(/[^0-9]/g, "");
     const cross = (allLeads || []).some((l) => {
       const leadDigits = (l.phone || "").replace(/[^0-9]/g, "");
@@ -79,21 +77,17 @@ export async function importFromDiscord(targetUserId, range) {
       product: c.product,
       videos_text: c.videos_text,
       price_text: c.price_text,
+      message_created_at: c.created_at,
       cross_member: cross,
       status: "pending",
     };
   });
 
-  const { error } = await supabase
-    .from("lead_requests")
-    .upsert(rows, { onConflict: "user_id,discord_message_id", ignoreDuplicates: true });
-
+  const { error } = await supabase.from("lead_requests").insert(rows);
   if (error) {
     console.error("Error guardando lead_requests:", error);
     return { error: error.message };
   }
-
-  await supabase.from("discord_import_log").insert({ user_id: userId, imported_until: until.toISOString() });
 
   return { ok: true, imported: rows.length };
 }
@@ -106,7 +100,7 @@ export async function listLeadRequests(targetUserId) {
     .select("*")
     .eq("user_id", userId)
     .eq("status", "pending")
-    .order("created_at", { ascending: false });
+    .order("message_created_at", { ascending: false });
   return data || [];
 }
 
