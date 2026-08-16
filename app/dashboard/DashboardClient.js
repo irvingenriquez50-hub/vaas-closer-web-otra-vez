@@ -92,13 +92,8 @@ function RequestCard({ req, onActivate, onReject, F_MONO }) {
       <div className="flex gap-2 mt-2">
         <button
           onClick={onActivate}
-          disabled={!sent}
           className="flex-1 py-2 rounded-lg text-xs font-semibold"
-          style={{
-            background: sent ? "#34D399" : "#1B2430",
-            color: sent ? "#06110F" : "#4A5568",
-            cursor: sent ? "pointer" : "not-allowed",
-          }}
+          style={{ background: "#34D399", color: "#06110F" }}
         >
           Empezar
         </button>
@@ -198,17 +193,14 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   }, [targetUserId]);
 
   const loadCalendar = useCallback(async () => {
-    setCalendarLoading(true);
     const data = await getDiscordCalendar(targetUserId);
     setCalendar(data);
-    setCalendarLoading(false);
   }, [targetUserId]);
 
   useEffect(() => {
-    if (tab === "revision") {
-      loadLeadRequests();
-      loadCalendar();
-    }
+    if (tab !== "revision") return;
+    setCalendarLoading(true);
+    Promise.all([loadLeadRequests(), loadCalendar()]).then(() => setCalendarLoading(false));
   }, [tab, loadLeadRequests, loadCalendar]);
 
   const doImportDay = (dateStr) => {
@@ -688,7 +680,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
         <div className="px-5 pt-4">
           <div className="rounded-xl p-4 mb-4" style={{ background: "#141B24", border: "1px solid #22D3C0" }}>
             <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 10 }}>
-              Calendario — toca un día para traer sus contactos. Si ya rechazaste alguno de ese día, se recupera; los que ya activaste se quedan como están.
+              Calendario — toca un día para traer sus contactos. Recarga la página si mandaron contactos nuevos y no los ves.
             </div>
             {calendarLoading ? (
               <div style={{ fontSize: 12, color: "#8B96A5" }}>Cargando calendario...</div>
