@@ -14,7 +14,6 @@ async function resolveTargetUserId(requestedId) {
   return user.id;
 }
 
-// Trae el calendario: cuántos contactos hay por día, en los últimos 150 días.
 export async function getDiscordCalendar(targetUserId) {
   await resolveTargetUserId(targetUserId);
   const since = new Date(Date.now() - 150 * 24 * 60 * 60 * 1000);
@@ -27,9 +26,9 @@ export async function getDiscordCalendar(targetUserId) {
   return data.summary;
 }
 
-// Importa (o re-importa) los contactos de UN día específico. Si algún contacto
-// ya estaba "rejected", lo regresa a "pending" — así se puede recuperar.
-// Los que ya están "activated" NUNCA se tocan.
+// Importa (o re-importa) los contactos de UN día específico. Si algún
+// contacto ya estaba "rejected", lo regresa a "pending" — se puede recuperar.
+// Los que ya están "activated" u "ongoing" NUNCA se tocan ni regresan.
 export async function importDay(targetUserId, dateStr) {
   const userId = await resolveTargetUserId(targetUserId);
   const supabase = createClient();
@@ -54,7 +53,8 @@ export async function importDay(targetUserId, dateStr) {
   let count = 0;
   for (const c of data.contacts) {
     const currentStatus = existingMap.get(c.discord_message_key);
-    if (currentStatus === "activated" || currentStatus === "pending") continue; // no tocar
+    // Protegidos para siempre: activated, ongoing, o ya visible como pending.
+    if (currentStatus === "activated" || currentStatus === "ongoing" || currentStatus === "pending") continue;
 
     const digits = c.phone.replace(/[^0-9]/g, "");
     const cross = (allLeads || []).some((l) => {
@@ -113,5 +113,14 @@ export async function rejectLeadRequest(targetUserId, requestId) {
   const userId = await resolveTargetUserId(targetUserId);
   const supabase = createClient();
   await supabase.from("lead_requests").update({ status: "rejected" }).eq("id", requestId).eq("user_id", userId);
+  return { ok: true };
+}
+
+// Marca un contacto como "ya tengo colaboración con esta persona" — queda
+// protegido para siempre, nunca vuelve a aparecer aunque se reimporte ese día.
+export async function markOngoingRequest(targetUserId, requestId) {
+  const userId = await resolveTargetUserId(targetUserId);
+  const supabase = createClient();
+  await supabase.from("lead_requests").update({ status: "ongoing" }).eq("id", requestId).eq("user_id", userId);
   return { ok: true };
 }
