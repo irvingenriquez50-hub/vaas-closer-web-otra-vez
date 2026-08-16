@@ -3,7 +3,7 @@ import { useState, useTransition, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, removeLead, restartLead, resolveLeadManually } from "./actions";
 import { connectWhatsapp, whatsappStatus, resetWhatsapp } from "./whatsapp-actions";
-import { importFromDiscord, listLeadRequests, activateLeadRequest, rejectLeadRequest } from "./discord-actions";
+import { getDiscordCalendar, importDay, listLeadRequests, activateLeadRequest, rejectLeadRequest } from "./discord-actions";
 
 const TIERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 30];
 const STAGES = [
@@ -23,18 +23,6 @@ const PRICE_TABLES = {
   350: { 1:[350,300,250],2:[700,600,500],3:[1050,900,750],4:[1400,1200,1000],5:[1600,1450,1250],6:[1900,1700,1500],7:[2250,2000,1750],8:[2550,2300,2000],9:[2900,2600,2250],10:[2800,2550,2300],15:[3950,3500,3000],20:[4900,4450,4000],30:[6600,6200,5800] },
   300: { 1:[300,250,200],2:[600,500,400],3:[900,750,600],4:[1200,1000,800],5:[1350,1200,1000],6:[1600,1400,1200],7:[1900,1650,1400],8:[2150,1900,1600],9:[2450,2150,1800],10:[2500,2250,2000],15:[3400,3100,2800],20:[4200,3900,3600],30:[6300,5850,5400] },
 };
-
-const DISCORD_RANGES = [
-  ["1d", "1 día"],
-  ["2d", "2 días"],
-  ["3d", "3 días"],
-  ["7d", "1 semana"],
-  ["30d", "1 mes"],
-  ["60d", "2 meses"],
-  ["90d", "3 meses"],
-  ["120d", "4 meses"],
-  ["150d", "5 meses"],
-];
 
 function defaultTiers() {
   return TIERS.map((n) => ({ videos: n, anchor: n === 1 ? 300 : 300 * n, medio: n === 1 ? 250 : 250 * n, floor: n === 1 ? 200 : 200 * n }));
@@ -65,6 +53,65 @@ function groupByDate(requests) {
     groups[label].push(req);
   }
   return Object.entries(groups);
+}
+
+function RequestCard({ req, onActivate, onReject, F_MONO }) {
+  const [sent, setSent] = useState(false);
+
+  return (
+    <div
+      className="rounded-xl p-4"
+      style={{ background: "#141B24", border: req.cross_member ? "1px solid #F2B84B" : "1px solid #232D3A" }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div style={{ fontFamily: F_MONO, fontSize: 14, fontWeight: 600 }}>{req.phone}</div>
+        <a
+          href={waLink(req.phone)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="px-1.5 py-0.5 rounded-md text-[10px] font-medium"
+          style={{ background: "#25D36622", color: "#25D366" }}
+        >
+          WhatsApp ↗
+        </a>
+      </div>
+      <div style={{ fontSize: 11, color: "#8B96A5", lineHeight: 1.6 }}>
+        {req.product && <div>Producto: {req.product}</div>}
+        {req.videos_text && <div>{req.videos_text}</div>}
+        {req.price_text && <div>{req.price_text}</div>}
+      </div>
+      {req.cross_member && (
+        <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#F2B84B15", color: "#F2B84B" }}>
+          ⚠️ Ya tienes historial con este número en otro miembro.
+        </div>
+      )}
+      <label className="flex items-center gap-2 mt-3 px-1" style={{ fontSize: 11.5, color: "#8B96A5" }}>
+        <input type="checkbox" checked={sent} onChange={(e) => setSent(e.target.checked)} />
+        Ya le mandé el mensaje desde mi teléfono
+      </label>
+      <div className="flex gap-2 mt-2">
+        <button
+          onClick={onActivate}
+          disabled={!sent}
+          className="flex-1 py-2 rounded-lg text-xs font-semibold"
+          style={{
+            background: sent ? "#34D399" : "#1B2430",
+            color: sent ? "#06110F" : "#4A5568",
+            cursor: sent ? "pointer" : "not-allowed",
+          }}
+        >
+          Empezar
+        </button>
+        <button
+          onClick={onReject}
+          className="px-3 py-2 rounded-lg text-xs font-semibold"
+          style={{ background: "#2A1620", color: "#F19999" }}
+        >
+          Rechazar
+        </button>
+      </div>
+    </div>
+  );
 }
 
 const DEFAULT_SCRIPT = `• FROM THE VAAS COMMUNITY •
@@ -123,9 +170,9 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   const [waError, setWaError] = useState("");
 
   const [leadRequests, setLeadRequests] = useState([]);
-  const [discordRange, setDiscordRange] = useState("7d");
-  const [discordLoading, setDiscordLoading] = useState(false);
-  const [discordMsg, setDiscordMsg] = useState("");
+  const [calendar, setCalendar] = useState([]);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [importingDay, setImportingDay] = useState(null);
 
   const checkWaStatus = useCallback(async () => {
     try {
@@ -150,9 +197,28 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
     setLeadRequests(data);
   }, [targetUserId]);
 
+  const loadCalendar = useCallback(async () => {
+    setCalendarLoading(true);
+    const data = await getDiscordCalendar(targetUserId);
+    setCalendar(data);
+    setCalendarLoading(false);
+  }, [targetUserId]);
+
   useEffect(() => {
-    if (tab === "revision") loadLeadRequests();
-  }, [tab, loadLeadRequests]);
+    if (tab === "revision") {
+      loadLeadRequests();
+      loadCalendar();
+    }
+  }, [tab, loadLeadRequests, loadCalendar]);
+
+  const doImportDay = (dateStr) => {
+    setImportingDay(dateStr);
+    startTransition(async () => {
+      await importDay(targetUserId, dateStr);
+      setImportingDay(null);
+      loadLeadRequests();
+    });
+  };
 
   const doConnectWhatsapp = async () => {
     setWaLoading(true);
@@ -229,21 +295,6 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
     if (!confirm("Esto archiva el contacto sin reportarlo a tu Retainer Tracker. ¿Seguro?")) return;
     setLeads((prev) => prev.filter((l) => l.id !== leadId));
     startTransition(() => resolveLeadManually(targetUserId, leadId));
-  };
-
-  const doImportFromDiscord = () => {
-    setDiscordLoading(true);
-    setDiscordMsg("");
-    startTransition(async () => {
-      const res = await importFromDiscord(targetUserId, discordRange);
-      setDiscordLoading(false);
-      if (res?.error) {
-        setDiscordMsg(`Error: ${res.error}`);
-      } else {
-        setDiscordMsg(res.imported > 0 ? `${res.imported} contactos nuevos importados ✓` : "No hay contactos nuevos en ese rango.");
-        loadLeadRequests();
-      }
-    });
   };
 
   const doActivateRequest = (req) => {
@@ -636,91 +687,72 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
       {tab === "revision" && (
         <div className="px-5 pt-4">
           <div className="rounded-xl p-4 mb-4" style={{ background: "#141B24", border: "1px solid #22D3C0" }}>
-            <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 8 }}>
-              Importa contactos del Discord. Se agrupan por fecha abajo.
+            <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 10 }}>
+              Calendario — toca un día para traer sus contactos. Si ya rechazaste alguno de ese día, se recupera; los que ya activaste se quedan como están.
             </div>
-            <div className="flex gap-2 flex-wrap mb-2">
-              {DISCORD_RANGES.map(([key, label]) => (
-                <button
-                  key={key}
-                  onClick={() => setDiscordRange(key)}
-                  className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium"
-                  style={discordRange === key ? { background: "#22D3C0", color: "#06110F" } : { background: "#0B0E14", color: "#8B96A5", border: "1px solid #232D3A" }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={doImportFromDiscord}
-              disabled={discordLoading}
-              className="w-full py-2.5 rounded-xl font-semibold text-sm"
-              style={{ background: "#22D3C0", color: "#06110F" }}
-            >
-              {discordLoading ? "Importando..." : "Importar de Discord"}
-            </button>
-            {discordMsg && (
-              <div className="mt-2 text-[11px]" style={{ color: "#8B96A5" }}>{discordMsg}</div>
+            {calendarLoading ? (
+              <div style={{ fontSize: 12, color: "#8B96A5" }}>Cargando calendario...</div>
+            ) : calendar.length === 0 ? (
+              <div style={{ fontSize: 12, color: "#8B96A5" }}>No hay contactos en los últimos 5 meses.</div>
+            ) : (
+              <div className="flex gap-2 flex-wrap">
+                {calendar.map((day) => {
+                  const d = new Date(`${day.date}T12:00:00Z`);
+                  const label = d.toLocaleDateString("es-MX", { day: "numeric", month: "short" });
+                  const isLoading = importingDay === day.date;
+                  return (
+                    <button
+                      key={day.date}
+                      onClick={() => doImportDay(day.date)}
+                      disabled={isLoading}
+                      className="px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1.5"
+                      style={{ background: "#0B0E14", border: "1px solid #232D3A", color: "#EDEFF2" }}
+                    >
+                      <span style={{ textTransform: "capitalize" }}>{isLoading ? "Cargando..." : label}</span>
+                      <span
+                        className="px-1.5 rounded-full text-[10px] font-bold"
+                        style={{ background: "#22D3C022", color: "#22D3C0" }}
+                      >
+                        {day.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             )}
           </div>
 
           {leadRequests.length === 0 && (
             <div className="text-sm text-center py-10" style={{ color: "#8B96A5" }}>
-              Nada por revisar todavía.
+              Nada por revisar todavía — toca un día del calendario de arriba.
             </div>
           )}
 
           {groupedRequests.map(([dateLabel, reqs]) => (
-            <div key={dateLabel} className="mb-5">
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#8AB4F8", marginBottom: 8, textTransform: "capitalize" }}>
-                {dateLabel}
+            <div key={dateLabel} className="mb-6">
+              <div
+                className="flex items-center gap-2 mb-3 pb-2"
+                style={{ borderBottom: "1px solid #1B2430" }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#8AB4F8", textTransform: "capitalize" }}>
+                  {dateLabel}
+                </div>
+                <div
+                  className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                  style={{ background: "#8AB4F822", color: "#8AB4F8" }}
+                >
+                  {reqs.length}
+                </div>
               </div>
               <div className="flex flex-col gap-3">
                 {reqs.map((req) => (
-                  <div
+                  <RequestCard
                     key={req.id}
-                    className="rounded-xl p-4"
-                    style={{ background: "#141B24", border: req.cross_member ? "1px solid #F2B84B" : "1px solid #232D3A" }}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div style={{ fontFamily: F_MONO, fontSize: 14, fontWeight: 600 }}>{req.phone}</div>
-                      <a
-                        href={waLink(req.phone)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-1.5 py-0.5 rounded-md text-[10px] font-medium"
-                        style={{ background: "#25D36622", color: "#25D366" }}
-                      >
-                        WhatsApp ↗
-                      </a>
-                    </div>
-                    <div style={{ fontSize: 11, color: "#8B96A5", lineHeight: 1.6 }}>
-                      {req.product && <div>Producto: {req.product}</div>}
-                      {req.videos_text && <div>{req.videos_text}</div>}
-                      {req.price_text && <div>{req.price_text}</div>}
-                    </div>
-                    {req.cross_member && (
-                      <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#F2B84B15", color: "#F2B84B" }}>
-                        ⚠️ Ya tienes historial con este número en otro miembro.
-                      </div>
-                    )}
-                    <div className="flex gap-2 mt-3">
-                      <button
-                        onClick={() => doActivateRequest(req)}
-                        className="flex-1 py-2 rounded-lg text-xs font-semibold"
-                        style={{ background: "#34D399", color: "#06110F" }}
-                      >
-                        Ya mandé el mensaje — Empezar
-                      </button>
-                      <button
-                        onClick={() => doRejectRequest(req.id)}
-                        className="px-3 py-2 rounded-lg text-xs font-semibold"
-                        style={{ background: "#2A1620", color: "#F19999" }}
-                      >
-                        Rechazar
-                      </button>
-                    </div>
-                  </div>
+                    req={req}
+                    onActivate={() => doActivateRequest(req)}
+                    onReject={() => doRejectRequest(req.id)}
+                    F_MONO={F_MONO}
+                  />
                 ))}
               </div>
             </div>
