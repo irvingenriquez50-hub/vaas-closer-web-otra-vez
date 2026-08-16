@@ -3,6 +3,7 @@ import { useState, useTransition, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, removeLead, restartLead, resolveLeadManually } from "./actions";
 import { connectWhatsapp, whatsappStatus, resetWhatsapp } from "./whatsapp-actions";
+import { importFromDiscord, listLeadRequests, activateLeadRequest, rejectLeadRequest } from "./discord-actions";
 
 const TIERS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 30];
 const STAGES = [
@@ -22,6 +23,18 @@ const PRICE_TABLES = {
   350: { 1:[350,300,250],2:[700,600,500],3:[1050,900,750],4:[1400,1200,1000],5:[1600,1450,1250],6:[1900,1700,1500],7:[2250,2000,1750],8:[2550,2300,2000],9:[2900,2600,2250],10:[2800,2550,2300],15:[3950,3500,3000],20:[4900,4450,4000],30:[6600,6200,5800] },
   300: { 1:[300,250,200],2:[600,500,400],3:[900,750,600],4:[1200,1000,800],5:[1350,1200,1000],6:[1600,1400,1200],7:[1900,1650,1400],8:[2150,1900,1600],9:[2450,2150,1800],10:[2500,2250,2000],15:[3400,3100,2800],20:[4200,3900,3600],30:[6300,5850,5400] },
 };
+
+const DISCORD_RANGES = [
+  ["1d", "1 día"],
+  ["2d", "2 días"],
+  ["3d", "3 días"],
+  ["7d", "1 semana"],
+  ["30d", "1 mes"],
+  ["60d", "2 meses"],
+  ["90d", "3 meses"],
+  ["120d", "4 meses"],
+  ["150d", "5 meses"],
+];
 
 function defaultTiers() {
   return TIERS.map((n) => ({ videos: n, anchor: n === 1 ? 300 : 300 * n, medio: n === 1 ? 250 : 250 * n, floor: n === 1 ? 200 : 200 * n }));
@@ -98,6 +111,12 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   const [waLoading, setWaLoading] = useState(false);
   const [waError, setWaError] = useState("");
 
+  // ---- Revisión (Discord import) ----
+  const [leadRequests, setLeadRequests] = useState([]);
+  const [discordRange, setDiscordRange] = useState("7d");
+  const [discordLoading, setDiscordLoading] = useState(false);
+  const [discordMsg, setDiscordMsg] = useState("");
+
   const checkWaStatus = useCallback(async () => {
     try {
       const res = await whatsappStatus(targetUserId);
@@ -115,6 +134,15 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
     const interval = setInterval(checkWaStatus, 4000);
     return () => clearInterval(interval);
   }, [checkWaStatus]);
+
+  const loadLeadRequests = useCallback(async () => {
+    const data = await listLeadRequests(targetUserId);
+    setLeadRequests(data);
+  }, [targetUserId]);
+
+  useEffect(() => {
+    if (tab === "revision") loadLeadRequests();
+  }, [tab, loadLeadRequests]);
 
   const doConnectWhatsapp = async () => {
     setWaLoading(true);
@@ -193,6 +221,36 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
     startTransition(() => resolveLeadManually(targetUserId, leadId));
   };
 
+  const doImportFromDiscord = () => {
+    setDiscordLoading(true);
+    setDiscordMsg("");
+    startTransition(async () => {
+      const res = await importFromDiscord(targetUserId, discordRange);
+      setDiscordLoading(false);
+      if (res?.error) {
+        setDiscordMsg(`Error: ${res.error}`);
+      } else {
+        setDiscordMsg(res.imported > 0 ? `${res.imported} contactos nuevos importados ✓` : "No hay contactos nuevos en ese rango.");
+        loadLeadRequests();
+      }
+    });
+  };
+
+  const doActivateRequest = (req) => {
+    startTransition(async () => {
+      const res = await activateLeadRequest(targetUserId, req.id, req.phone);
+      if (!res?.error) {
+        setLeadRequests((prev) => prev.filter((r) => r.id !== req.id));
+        setLeads((prev) => [{ id: crypto.randomUUID(), phone: req.phone, status: "esperando", paused: false, updated_at: new Date().toISOString() }, ...prev]);
+      }
+    });
+  };
+
+  const doRejectRequest = (reqId) => {
+    setLeadRequests((prev) => prev.filter((r) => r.id !== reqId));
+    startTransition(() => rejectLeadRequest(targetUserId, reqId));
+  };
+
   const signOut = async () => {
     const supabase = createClient();
     await supabase.auth.signOut();
@@ -222,12 +280,13 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
         )}
       </div>
 
-      <div className="px-5 pt-4 flex gap-2">
+      <div className="px-5 pt-4 flex gap-2 flex-wrap">
         {[
           ["whatsapp", "WhatsApp"],
           ["escrito", "Tu escrito"],
           ["precios", "Precios"],
           ["cola", "Cola de contactos"],
+          ["revision", "Revisión"],
         ].map(([key, label]) => (
           <button
             key={key}
@@ -558,6 +617,93 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {tab === "revision" && (
+        <div className="px-5 pt-4">
+          <div className="rounded-xl p-4 mb-4" style={{ background: "#141B24", border: "1px solid #22D3C0" }}>
+            <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 8 }}>
+              Importa contactos del Discord. Solo trae los que no hayas importado antes.
+            </div>
+            <div className="flex gap-2 flex-wrap mb-2">
+              {DISCORD_RANGES.map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setDiscordRange(key)}
+                  className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium"
+                  style={discordRange === key ? { background: "#22D3C0", color: "#06110F" } : { background: "#0B0E14", color: "#8B96A5", border: "1px solid #232D3A" }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={doImportFromDiscord}
+              disabled={discordLoading}
+              className="w-full py-2.5 rounded-xl font-semibold text-sm"
+              style={{ background: "#22D3C0", color: "#06110F" }}
+            >
+              {discordLoading ? "Importando..." : "Importar de Discord"}
+            </button>
+            {discordMsg && (
+              <div className="mt-2 text-[11px]" style={{ color: "#8B96A5" }}>{discordMsg}</div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {leadRequests.length === 0 && (
+              <div className="text-sm text-center py-10" style={{ color: "#8B96A5" }}>
+                Nada por revisar todavía.
+              </div>
+            )}
+            {leadRequests.map((req) => (
+              <div
+                key={req.id}
+                className="rounded-xl p-4"
+                style={{ background: "#141B24", border: req.cross_member ? "1px solid #F2B84B" : "1px solid #232D3A" }}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div style={{ fontFamily: F_MONO, fontSize: 14, fontWeight: 600 }}>{req.phone}</div>
+                  <a
+                    href={waLink(req.phone)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-1.5 py-0.5 rounded-md text-[10px] font-medium"
+                    style={{ background: "#25D36622", color: "#25D366" }}
+                  >
+                    WhatsApp ↗
+                  </a>
+                </div>
+                <div style={{ fontSize: 11, color: "#8B96A5", lineHeight: 1.6 }}>
+                  {req.product && <div>Producto: {req.product}</div>}
+                  {req.videos_text && <div>{req.videos_text}</div>}
+                  {req.price_text && <div>{req.price_text}</div>}
+                </div>
+                {req.cross_member && (
+                  <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#F2B84B15", color: "#F2B84B" }}>
+                    ⚠️ Ya tienes historial con este número en otro miembro.
+                  </div>
+                )}
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={() => doActivateRequest(req)}
+                    className="flex-1 py-2 rounded-lg text-xs font-semibold"
+                    style={{ background: "#34D399", color: "#06110F" }}
+                  >
+                    Ya mandé el mensaje — Empezar
+                  </button>
+                  <button
+                    onClick={() => doRejectRequest(req.id)}
+                    className="px-3 py-2 rounded-lg text-xs font-semibold"
+                    style={{ background: "#2A1620", color: "#F19999" }}
+                  >
+                    Rechazar
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
