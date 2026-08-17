@@ -16,10 +16,17 @@ async function resolveTargetUserId(requestedId) {
   return user.id;
 }
 
-export async function saveScript(targetUserId, message1) {
+export async function saveScript(targetUserId, fields) {
   const userId = await resolveTargetUserId(targetUserId);
   const supabase = createClient();
-  await supabase.from("scripts").upsert({ user_id: userId, message1 });
+  await supabase.from("scripts").upsert({
+    user_id: userId,
+    gmv_total: fields.gmvTotal || "",
+    market: fields.market || "",
+    short_name: fields.shortName || "",
+    gmv_30d: fields.gmv30d || "",
+    tiktok_handle: fields.tiktokHandle || "",
+  });
   revalidatePath("/dashboard");
 }
 
