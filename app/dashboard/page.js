@@ -31,7 +31,13 @@ export default async function DashboardPage({ searchParams }) {
       isAdminView={isAdminView}
       profile={profile}
       initialTiers={tiers || []}
-      initialScript={script?.message1 || ""}
+      initialScript={{
+        gmvTotal: script?.gmv_total || "",
+        market: script?.market || "Spanish-speaking",
+        shortName: script?.short_name || "",
+        gmv30d: script?.gmv_30d || "",
+        tiktokHandle: script?.tiktok_handle || "",
+      }}
       initialLeads={leads || []}
     />
   );
