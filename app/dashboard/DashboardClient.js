@@ -632,6 +632,18 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                 className="bg-transparent outline-none flex-1 text-sm"
                 style={{ color: "#EDEFF2", fontFamily: F_MONO }}
               />
+              {phoneInput.replace(/[^0-9]/g, "").length >= 7 && (
+                <a
+                  href={waLink(normalizePhoneForCountry(phoneInput, addCountry))}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-2 px-2 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap"
+                  style={{ background: "#25D36622", color: "#25D366" }}
+                  title="Abrir este número en WhatsApp para mandarle el escrito a mano — luego regresas y le picas Agregar"
+                >
+                  WhatsApp ↗
+                </a>
+              )}
             </div>
             <button
               onClick={() => setAddCountry((c) => (c === "other" ? "china" : c === "china" ? "us" : "other"))}
