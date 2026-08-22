@@ -1,5 +1,5 @@
 "use client";
-import { useState, useTransition, useEffect, useCallback } from "react";
+import { useState, useTransition, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, removeLead, restartLead, resolveLeadManually } from "./actions";
 import { connectWhatsapp, whatsappStatus, resetWhatsapp } from "./whatsapp-actions";
@@ -15,6 +15,37 @@ const STAGES = [
   { key: "cerrado", label: "Cerrado" },
 ];
 const stageIndex = (key) => Math.max(0, STAGES.findIndex((s) => s.key === key));
+
+// Burbujas de filtro de la cola, en el orden del embudo real: de lo que no se ha
+// mandado hasta lo cerrado, y al final los que necesitan que Irving haga algo.
+// Solo se pintan las que tienen al menos 1 contacto, para que no se llene de
+// burbujas vacías.
+const LEAD_FILTERS = [
+  { key: "todos", label: "Todos", color: "#22D3C0" },
+  { key: "nuevo", label: "Nuevos", color: "#8AB4F8" },
+  { key: "escrito_enviado", label: "Enviados", color: "#22D3C0" },
+  { key: "esperando", label: "Esperando", color: "#8B96A5" },
+  { key: "followup", label: "Follow-up", color: "#F2B84B" },
+  { key: "negociando", label: "Negociando", color: "#C084FC" },
+  { key: "cerrado", label: "Cerrados", color: "#34D399" },
+  { key: "dormant", label: "Dormidos", color: "#6B7684" },
+  { key: "cruzado", label: "Cruzados", color: "#F2B84B" },
+  { key: "fallido", label: "Fallidos", color: "#F19999" },
+];
+
+/** Fecha corta (08/21) del último movimiento del contacto, con la fecha completa
+ * en el tooltip. Se prefiere la fecha en que SALIÓ el último mensaje; si el lead
+ * es tan viejo que no la tiene guardada, se cae a cuándo se creó. */
+function leadDate(lead) {
+  const raw = lead.last_outbound_at || lead.created_at || lead.updated_at;
+  if (!raw) return null;
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return null;
+  return {
+    short: d.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit" }),
+    full: d.toLocaleString("es-MX", { day: "numeric", month: "long", hour: "numeric", minute: "2-digit" }),
+  };
+}
 
 const PRICE_TABLES = {
   500: { 1:[500,450,400],2:[1000,900,800],3:[1500,1350,1200],4:[2050,1800,1600],5:[2250,2100,1900],6:[2700,2550,2400],7:[3150,2950,2800],8:[3600,3400,3200],9:[4050,3850,3600],10:[4000,3750,3500],15:[5250,4850,4500],20:[7000,6500,6000],30:[9000,8250,7500] },
@@ -181,6 +212,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   const [addCountry, setAddCountry] = useState("other");
   const [leadError, setLeadError] = useState("");
   const [pending, startTransition] = useTransition();
+  const [leadFilter, setLeadFilter] = useState("todos");
 
   const [waConnected, setWaConnected] = useState(false);
   const [waLoading, setWaLoading] = useState(false);
@@ -193,6 +225,32 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   const [resettingDay, setResettingDay] = useState(null);
   const [resetResult, setResetResult] = useState(null);
   const [dayStatuses, setDayStatuses] = useState({});
+
+  // Conteo en vivo por estado, para las burbujas de filtro.
+  const leadCounts = useMemo(() => {
+    const counts = { todos: leads.length };
+    for (const lead of leads) {
+      const key = lead.status || "nuevo";
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    return counts;
+  }, [leads]);
+
+  const visibleFilters = useMemo(
+    () => LEAD_FILTERS.filter((f) => f.key === "todos" || (leadCounts[f.key] || 0) > 0),
+    [leadCounts]
+  );
+
+  const filteredLeads = useMemo(
+    () => (leadFilter === "todos" ? leads : leads.filter((l) => (l.status || "nuevo") === leadFilter)),
+    [leads, leadFilter]
+  );
+
+  // Si el filtro activo se queda sin contactos (por ejemplo borraste el último
+  // fallido), se regresa solo a "Todos" para que nunca quede una lista vacía.
+  useEffect(() => {
+    if (leadFilter !== "todos" && (leadCounts[leadFilter] || 0) === 0) setLeadFilter("todos");
+  }, [leadCounts, leadFilter]);
 
   const checkWaStatus = useCallback(async () => {
     try {
@@ -322,7 +380,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
       } else {
         setLeadError("");
         setPhoneInput("");
-        setLeads((l) => [{ id: crypto.randomUUID(), phone: normalized, status: skipMessage1 ? "esperando" : "nuevo", timezone: addCountry, paused: false, updated_at: new Date().toISOString() }, ...l]);
+        setLeads((l) => [{ id: crypto.randomUUID(), phone: normalized, status: skipMessage1 ? "esperando" : "nuevo", timezone: addCountry, paused: false, updated_at: new Date().toISOString(), created_at: new Date().toISOString() }, ...l]);
       }
     });
   };
@@ -364,6 +422,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
             status: skipMessage1 ? "esperando" : "nuevo",
             paused: false,
             updated_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
           },
           ...prev,
         ]);
@@ -677,16 +736,52 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
             </div>
           )}
 
+          {leads.length > 0 && (
+            <div className="mt-4 flex gap-1.5 flex-wrap">
+              {visibleFilters.map((f) => {
+                const count = leadCounts[f.key] || 0;
+                const active = leadFilter === f.key;
+                return (
+                  <button
+                    key={f.key}
+                    onClick={() => setLeadFilter(f.key)}
+                    className="flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-full text-[11px] font-semibold"
+                    style={
+                      active
+                        ? { background: f.color, color: "#06110F", border: `1px solid ${f.color}` }
+                        : { background: "#141B24", color: f.color, border: `1px solid ${f.color}38` }
+                    }
+                  >
+                    {f.label}
+                    <span
+                      className="px-1.5 rounded-full text-[10px] font-bold"
+                      style={active ? { background: "#06110F22", color: "#06110F" } : { background: `${f.color}1F`, color: f.color }}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <div className="mt-4 flex flex-col gap-3">
             {leads.length === 0 && (
               <div className="text-sm text-center py-10" style={{ color: "#8B96A5" }}>
                 Sin números en cola todavía.
               </div>
             )}
-            {leads.map((lead) => {
+            {leads.length > 0 && filteredLeads.length === 0 && (
+              <div className="text-sm text-center py-10" style={{ color: "#8B96A5" }}>
+                No hay contactos en este filtro.
+              </div>
+            )}
+            {filteredLeads.map((lead) => {
               const idx = stageIndex(lead.status);
               const isCross = lead.status === "cruzado";
               const isFailed = lead.status === "fallido";
+              const isDormant = lead.status === "dormant";
+              const fecha = leadDate(lead);
               return (
                 <div
                   key={lead.id}
@@ -697,8 +792,17 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                   }}
                 >
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <div style={{ fontFamily: F_MONO, fontSize: 14, fontWeight: 600 }}>{lead.phone}</div>
+                      {fecha && (
+                        <span
+                          className="px-1.5 py-0.5 rounded-md text-[10px] font-medium"
+                          style={{ background: "#0B0E14", color: "#6B7684", fontFamily: F_MONO, border: "1px solid #1B2430" }}
+                          title={`Último movimiento: ${fecha.full}`}
+                        >
+                          {fecha.short}
+                        </span>
+                      )}
                       <a
                         href={waLink(lead.phone)}
                         target="_blank"
@@ -749,6 +853,15 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                             Marcar resuelto
                           </button>
                         </>
+                      ) : isDormant ? (
+                        <button
+                          onClick={() => doRestartLead(lead.id)}
+                          className="px-2 py-1 rounded-lg text-[10px] font-medium"
+                          style={{ background: "#22D3C022", color: "#22D3C0" }}
+                          title="Volver a mandarle el escrito desde cero"
+                        >
+                          Reiniciar
+                        </button>
                       ) : (
                         <button
                           onClick={() => {
@@ -784,6 +897,10 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                     <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#F2B84B15", color: "#F2B84B" }}>
                       ⚠️ Colaboración cruzada — este número ya tiene historial con otro miembro. Revisa el WhatsApp antes de decidir.
                     </div>
+                  ) : isDormant ? (
+                    <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#1B2430", color: "#8B96A5" }}>
+                      😴 Nunca contestó después de los follow-ups — el bot lo dejó descansar. Se reintenta solo a los 30 días.
+                    </div>
                   ) : (
                     <>
                       <div className="mt-3 flex items-center">
@@ -795,7 +912,10 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                         ))}
                       </div>
                       <div className="flex items-center justify-between mt-1.5">
-                        <span style={{ fontSize: 11, color: "#8B96A5" }}>{STAGES[idx].label}</span>
+                        <span style={{ fontSize: 11, color: "#8B96A5" }}>
+                          {STAGES[idx].label}
+                          {lead.status === "followup" && lead.followup_count > 0 ? ` ${lead.followup_count}/4` : ""}
+                        </span>
                         {idx < STAGES.length - 1 && (
                           <button
                             onClick={() => {
