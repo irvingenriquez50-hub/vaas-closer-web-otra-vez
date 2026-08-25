@@ -410,10 +410,15 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   // skipMessage1 ahora viene del checkbox real de cada tarjeta (RequestCard),
   // en vez de estar fijo en "true" — así el bot manda el template automáticamente
   // cuando Irving NO marcó que ya lo mandó a mano.
+  //
+  // PROTECCIÓN: si ya hay historial con ese número (chat del bot o trato cerrado),
+  // el servidor NO activa nada y regresa el detalle. Aquí se le enseña a Irving y
+  // él decide: OK = reiniciar y darle otra vuelta; Cancelar = no hacer nada (y si
+  // ya tiene colaboración, usa el botón "Ya tengo colab" de la misma tarjeta).
+  // Y si algo falla, el motivo SIEMPRE se muestra — nada de fallar en silencio.
   const doActivateRequest = (req, skipMessage1) => {
     startTransition(async () => {
-      const res = await activateLeadRequest(targetUserId, req.id, req.phone, skipMessage1);
-      if (!res?.error) {
+      const applySuccess = () => {
         setLeadRequests((prev) => prev.filter((r) => r.id !== req.id));
         setLeads((prev) => [
           {
@@ -427,7 +432,33 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
           ...prev,
         ]);
         loadDayStatuses();
+      };
+
+      const res = await activateLeadRequest(targetUserId, req.id, req.phone, skipMessage1);
+
+      if (res?.needsDecision) {
+        const seguir = window.confirm(
+          `⚠️ YA HAY HISTORIAL con ${req.phone}:\n\n${res.history.summary}\n\n` +
+            `¿Quieres REINICIAR y darle otra vuelta a este contacto?\n` +
+            `(El chat guardado no se borra.)\n\n` +
+            `Si ya tienes colaboración con esta persona, dale Cancelar y pícale "Ya tengo colab".`
+        );
+        if (!seguir) return;
+        const res2 = await activateLeadRequest(targetUserId, req.id, req.phone, skipMessage1, true);
+        if (res2?.error) {
+          window.alert(`No se pudo activar ${req.phone}:\n\n${res2.error}`);
+          return;
+        }
+        applySuccess();
+        return;
       }
+
+      if (res?.error) {
+        window.alert(`No se pudo activar ${req.phone}:\n\n${res.error}`);
+        return;
+      }
+
+      applySuccess();
     });
   };
 

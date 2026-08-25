@@ -14,6 +14,8 @@ async function resolveTargetUserId(requestedId) {
   return user.id;
 }
 
+const digitsOf = (s) => (s || "").replace(/[^0-9]/g, "");
+
 export async function getDiscordCalendar(targetUserId) {
   await resolveTargetUserId(targetUserId);
   const since = new Date(Date.now() - 150 * 24 * 60 * 60 * 1000);
@@ -116,13 +118,70 @@ export async function listLeadRequests(targetUserId) {  const userId = await res
   return data || [];
 }
 
+/** Busca si ESTE usuario ya tiene historial con un número: un chat en el bot
+ * (tabla leads) o un trato cerrado (tabla closed_deals). Solo LEE — no cambia
+ * nada. Devuelve un resumen en palabras para enseñárselo a Irving. */
+async function findExistingHistory(supabase, userId, phone) {
+  const tail = digitsOf(phone).slice(-8);
+  if (!tail || tail.length < 7) return null;
+
+  const [{ data: myLeads }, { data: myClosed }] = await Promise.all([
+    supabase.from("leads").select("id,phone,status,conversation,last_inbound_at").eq("user_id", userId),
+    supabase.from("closed_deals").select("phone,price,videos,closed_at").eq("user_id", userId),
+  ]);
+
+  const lead = (myLeads || []).find((l) => digitsOf(l.phone).slice(-8) === tail);
+  const closed = (myClosed || []).find((c) => digitsOf(c.phone).slice(-8) === tail);
+  if (!lead && !closed) return null;
+
+  const parts = [];
+  if (closed) {
+    const fecha = closed.closed_at ? new Date(closed.closed_at).toLocaleDateString("es-MX", { day: "numeric", month: "short" }) : "";
+    parts.push(`🤝 TRATO CERRADO${fecha ? ` el ${fecha}` : ""} — $${closed.price} por ${closed.videos} videos.`);
+  }
+  if (lead) {
+    const msgs = Array.isArray(lead.conversation) ? lead.conversation.length : 0;
+    const contestaron = Array.isArray(lead.conversation) && lead.conversation.some((m) => m.role === "user");
+    parts.push(`💬 Chat en el bot: estado "${lead.status}", ${msgs} mensaje${msgs === 1 ? "" : "s"}, ${contestaron ? "la marca SÍ ha contestado" : "la marca nunca contestó"}.`);
+  }
+  return { summary: parts.join("\n"), leadId: lead?.id || null, leadStatus: lead?.status || null };
+}
+
 // skipMessage1 refleja si el usuario ya mandó el mensaje 1 a mano desde su teléfono
 // (checkbox "Ya le mandé el mensaje" en la tarjeta) — si NO lo marcó, el bot debe
 // mandar el template de apertura automáticamente, igual que en "Cola de contactos".
-export async function activateLeadRequest(targetUserId, requestId, phone, skipMessage1 = true) {
+//
+// PROTECCIÓN NUEVA: antes de activar, se revisa si ya hay historial con ese número
+// (chat del bot o trato cerrado). Si lo hay y no vino "force", NO se hace nada y
+// se regresa el detalle para que Irving decida. Con force=true, el lead existente
+// se REINICIA (status nuevo o esperando) en vez de crear uno duplicado — el chat
+// guardado NO se borra, solo se le da otra vuelta.
+export async function activateLeadRequest(targetUserId, requestId, phone, skipMessage1 = true, force = false) {
   const userId = await resolveTargetUserId(targetUserId);
   const supabase = createClient();
 
+  const history = await findExistingHistory(supabase, userId, phone);
+
+  if (history && !force) {
+    return { needsDecision: true, history };
+  }
+
+  if (history && history.leadId) {
+    // Reinicio del lead que ya existe: se le da otra vuelta sin borrar el chat.
+    // Si Irving va a mandar el mensaje a mano (skipMessage1), queda "esperando";
+    // si lo manda el bot, queda "nuevo" y el sweep manda el template en la
+    // próxima ventana de envío.
+    const patch = skipMessage1
+      ? { status: "esperando", paused: false, negotiation: null, followup_count: 0, last_outbound_at: new Date().toISOString() }
+      : { status: "nuevo", paused: false, negotiation: null, followup_count: 0 };
+    const { error } = await supabase.from("leads").update(patch).eq("id", history.leadId).eq("user_id", userId);
+    if (error) return { error: `No se pudo reiniciar el chat existente: ${error.message}` };
+
+    await supabase.from("lead_requests").update({ status: "activated" }).eq("id", requestId).eq("user_id", userId);
+    return { ok: true, restarted: true };
+  }
+
+  // No hay lead previo (o solo había trato cerrado sin chat): flujo normal.
   const res = await fetch(`${process.env.BOT_ENGINE_URL}/add-lead/${userId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
