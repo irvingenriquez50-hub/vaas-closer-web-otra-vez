@@ -16,6 +16,17 @@ async function resolveTargetUserId(requestedId) {
   return user.id;
 }
 
+const digitsOf = (s) => (s || "").replace(/[^0-9]/g, "");
+
+/** Busca un lead de este usuario por número, comparando solo los últimos 8 dígitos
+ * — así da igual si está guardado como "+86 135 7603 8204" o "8613576038204". */
+async function findLeadByPhone(supabase, userId, phoneRaw) {
+  const digits = digitsOf(phoneRaw);
+  if (digits.length < 7) return null;
+  const { data } = await supabase.from("leads").select("*").eq("user_id", userId);
+  return (data || []).find((l) => digitsOf(l.phone).slice(-8) === digits.slice(-8)) || null;
+}
+
 export async function saveScript(targetUserId, fields) {
   const userId = await resolveTargetUserId(targetUserId);
   const supabase = createClient();
@@ -48,6 +59,18 @@ export async function addLead(targetUserId, phoneRaw, skipMessage1 = false) {
   const userId = await resolveTargetUserId(targetUserId);
   if (!phoneRaw?.trim()) return { error: "Número inválido." };
 
+  // PROTECCIÓN: si ya marcaste que tienes colaboración con este número, no se
+  // manda NADA. Puede ser el mismo contacto para otro producto, así que no se
+  // bloquea a la brava — se te avisa y tú decides revisándolo en WhatsApp.
+  const supabase = createClient();
+  const existing = await findLeadByPhone(supabase, userId, phoneRaw);
+  if (existing?.negotiation?.manualCollab) {
+    return {
+      error:
+        "Ya marcaste que tienes colaboración con este número — no se mandó nada. Si es para otro producto, revísalo en WhatsApp y escríbele tú a mano.",
+    };
+  }
+
   const res = await fetch(`${process.env.BOT_ENGINE_URL}/add-lead/${userId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -57,6 +80,54 @@ export async function addLead(targetUserId, phoneRaw, skipMessage1 = false) {
   if (!data.ok) return { error: data.error || "No se pudo agregar el número." };
   revalidatePath("/dashboard");
   return { ok: true };
+}
+
+/** "Ya tengo colaboración con este número."
+ *
+ * Deja el contacto CERRADO y PAUSADO, con una marca que dice que fue una
+ * colaboración que ya tenías por tu cuenta (no un trato cerrado por el bot).
+ * Efecto: el bot nunca le escribe, ni ahora ni si el número vuelve a caer en la
+ * lista. NO se reporta nada al Retainer Tracker.
+ *
+ * Sirve para las dos situaciones:
+ *   - el número ya está en tu cola  -> se convierte, sin borrar su historial
+ *   - el número nunca ha estado ahí -> se registra desde cero, sin mandar nada
+ */
+export async function markAsCollab(targetUserId, phoneRaw) {
+  const userId = await resolveTargetUserId(targetUserId);
+  const digits = digitsOf(phoneRaw);
+  if (digits.length < 7) return { error: "Número inválido." };
+
+  const supabase = createClient();
+  const existing = await findLeadByPhone(supabase, userId, phoneRaw);
+
+  if (existing) {
+    const { error } = await supabase
+      .from("leads")
+      .update({
+        status: "cerrado",
+        paused: true,
+        negotiation: { ...(existing.negotiation || {}), manualCollab: true },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id)
+      .eq("user_id", userId);
+    if (error) return { error: error.message };
+    revalidatePath("/dashboard");
+    return { ok: true, updated: true, phone: existing.phone };
+  }
+
+  const { error } = await supabase.from("leads").insert({
+    user_id: userId,
+    phone: phoneRaw.trim(),
+    jid: digits,
+    status: "cerrado",
+    paused: true,
+    negotiation: { manualCollab: true },
+  });
+  if (error) return { error: error.message };
+  revalidatePath("/dashboard");
+  return { ok: true, created: true, phone: phoneRaw.trim() };
 }
 
 export async function updateLeadStatus(targetUserId, leadId, status) {

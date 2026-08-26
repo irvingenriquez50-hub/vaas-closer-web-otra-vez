@@ -1,7 +1,7 @@
 "use client";
 import { useState, useTransition, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, removeLead, restartLead, resolveLeadManually } from "./actions";
+import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, removeLead, restartLead, resolveLeadManually, markAsCollab } from "./actions";
 import { connectWhatsapp, whatsappStatus, resetWhatsapp } from "./whatsapp-actions";
 import { getDiscordCalendar, importDay, listLeadRequests, activateLeadRequest, rejectLeadRequest, markOngoingRequest, resetDayRequests, getDayStatuses } from "./discord-actions";
 
@@ -21,6 +21,7 @@ const stageIndex = (key) => Math.max(0, STAGES.findIndex((s) => s.key === key));
 // Solo se pintan las que tienen al menos 1 contacto, para que no se llene de
 // burbujas vacías.
 const MUTED_KEY = "mudos";
+const COLLAB_KEY = "colab";
 
 const LEAD_FILTERS = [
   { key: "todos", label: "Todos", color: "#22D3C0" },
@@ -34,7 +35,13 @@ const LEAD_FILTERS = [
   { key: "dormant", label: "Dormidos", color: "#6B7684" },
   { key: "cruzado", label: "Cruzados", color: "#F2B84B" },
   { key: "fallido", label: "Fallidos", color: "#F19999" },
+  { key: COLLAB_KEY, label: "🤝 Ya tengo colab", color: "#34D399" },
 ];
+
+/** Contactos que marcaste a mano como "ya tengo colaboración con esta persona".
+ * Quedan cerrados y pausados: el bot no les escribe nunca. No es un trato del
+ * bot, por eso lleva su propia marca y su propio filtro. */
+const isCollabLead = (lead) => !!lead?.negotiation?.manualCollab;
 
 /** Detecta contactos MUDOS: la marca escribió y el bot todavía no ha contestado.
  * Esto pasaba antes en silencio — el mensaje llegaba, el temporizador de respuesta
@@ -254,11 +261,12 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
 
   // Conteo en vivo por estado, para las burbujas de filtro.
   const leadCounts = useMemo(() => {
-    const counts = { todos: leads.length, [MUTED_KEY]: 0 };
+    const counts = { todos: leads.length, [MUTED_KEY]: 0, [COLLAB_KEY]: 0 };
     for (const lead of leads) {
       const key = lead.status || "nuevo";
       counts[key] = (counts[key] || 0) + 1;
       if (mutedInfo(lead)) counts[MUTED_KEY] += 1;
+      if (isCollabLead(lead)) counts[COLLAB_KEY] = (counts[COLLAB_KEY] || 0) + 1;
     }
     return counts;
   }, [leads]);
@@ -272,6 +280,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
     if (leadFilter === "todos") return leads;
     // "Sin contestar" no es un status guardado: se calcula comparando fechas.
     if (leadFilter === MUTED_KEY) return leads.filter((l) => mutedInfo(l));
+    if (leadFilter === COLLAB_KEY) return leads.filter(isCollabLead);
     return leads.filter((l) => (l.status || "nuevo") === leadFilter);
   }, [leads, leadFilter]);
 
@@ -428,6 +437,54 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
     setNeedsAutoSend(false);
     setLeadError("");
     startTransition(() => removeLead(targetUserId, lead.id));
+  };
+
+  // "Ya tengo colaboración con este número": lo deja cerrado y pausado, y el bot
+  // ya nunca le escribe. Sirve tanto para un contacto que ya está en la cola como
+  // para un número que nunca ha estado — así lo registras antes de mandarle nada.
+  const doMarkCollab = (phoneRaw, leadId = null) => {
+    startTransition(async () => {
+      const res = await markAsCollab(targetUserId, phoneRaw);
+      if (res?.error) {
+        window.alert(`No se pudo guardar:\n\n${res.error}`);
+        return;
+      }
+      setLeadError("");
+      if (leadId) {
+        setLeads((prev) =>
+          prev.map((l) =>
+            l.id === leadId
+              ? { ...l, status: "cerrado", paused: true, negotiation: { ...(l.negotiation || {}), manualCollab: true } }
+              : l
+          )
+        );
+      } else {
+        setPhoneInput("");
+        setLeads((prev) => {
+          const digits = (phoneRaw || "").replace(/[^0-9]/g, "");
+          const yaEsta = prev.some((l) => (l.phone || "").replace(/[^0-9]/g, "").slice(-8) === digits.slice(-8));
+          if (yaEsta) {
+            return prev.map((l) =>
+              (l.phone || "").replace(/[^0-9]/g, "").slice(-8) === digits.slice(-8)
+                ? { ...l, status: "cerrado", paused: true, negotiation: { ...(l.negotiation || {}), manualCollab: true } }
+                : l
+            );
+          }
+          return [
+            {
+              id: crypto.randomUUID(),
+              phone: phoneRaw,
+              status: "cerrado",
+              paused: true,
+              negotiation: { manualCollab: true },
+              updated_at: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+            },
+            ...prev,
+          ];
+        });
+      }
+    });
   };
 
   const doResolveLead = (leadId) => {
@@ -782,14 +839,30 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
               Agregar
             </button>
           </div>
-          <label className="flex items-center gap-2 mt-2 px-1" style={{ fontSize: 11.5, color: "#8B96A5" }}>
-            <input
-              type="checkbox"
-              checked={needsAutoSend}
-              onChange={(e) => setNeedsAutoSend(e.target.checked)}
-            />
-            No le he mandado el escrito — que lo mande el bot automáticamente
-          </label>
+          <div className="flex items-center justify-between gap-2 mt-2 px-1">
+            <label className="flex items-center gap-2" style={{ fontSize: 11.5, color: "#8B96A5" }}>
+              <input
+                type="checkbox"
+                checked={needsAutoSend}
+                onChange={(e) => setNeedsAutoSend(e.target.checked)}
+              />
+              No le he mandado el escrito — que lo mande el bot automáticamente
+            </label>
+            {phoneInput.replace(/[^0-9]/g, "").length >= 7 && (
+              <button
+                onClick={() => {
+                  const normalized = normalizePhoneForCountry(phoneInput, addCountry);
+                  if (!window.confirm(`¿Ya tienes colaboración con ${normalized}?\n\nSe guarda y el bot NUNCA le va a escribir. No se manda ningún mensaje.`)) return;
+                  doMarkCollab(normalized);
+                }}
+                className="px-2.5 py-1.5 rounded-lg text-[11px] font-semibold whitespace-nowrap flex-shrink-0"
+                style={{ background: "#34D39922", color: "#34D399", border: "1px solid #34D39955" }}
+                title="Guarda este número como colaboración que ya tienes — el bot no le escribe nunca"
+              >
+                🤝 Ya tengo colab
+              </button>
+            )}
+          </div>
           {leadError && (
             <div className="mt-2 px-3 py-2 rounded-lg text-xs" style={{ background: "#2A1620", color: "#F19999", border: "1px solid #4A2530" }}>
               {leadError}
@@ -842,6 +915,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
               const isFailed = lead.status === "fallido";
               const isDormant = lead.status === "dormant";
               const muted = mutedInfo(lead);
+              const isCollab = isCollabLead(lead);
               const fecha = leadDate(lead);
               return (
                 <div
@@ -851,6 +925,8 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                     background: "#141B24",
                     border: muted
                       ? "1px solid #FF5C5C"
+                      : isCollab
+                      ? "1px solid #34D39966"
                       : isFailed
                       ? "1px solid #F19999"
                       : isCross
@@ -945,6 +1021,19 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                           {lead.paused ? "Pausado" : "Pausar"}
                         </button>
                       )}
+                      {!isFailed && !isCollab && (
+                        <button
+                          onClick={() => {
+                            if (!window.confirm(`¿Ya tienes colaboración con ${lead.phone}?\n\nEl contacto se cierra y el bot NUNCA le vuelve a escribir. No se reporta nada a tu Retainer Tracker.`)) return;
+                            doMarkCollab(lead.phone, lead.id);
+                          }}
+                          className="px-2 py-1 rounded-lg text-[10px] font-medium"
+                          style={{ background: "#34D39922", color: "#34D399" }}
+                          title="Ya tengo colaboración — cierra el contacto de un jalón"
+                        >
+                          🤝 Colab
+                        </button>
+                      )}
                       {!isFailed && (
                         <button
                           onClick={() => {
@@ -959,6 +1048,11 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                       )}
                     </div>
                   </div>
+                  {isCollab && (
+                    <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#34D39915", color: "#34D399", border: "1px solid #34D39944" }}>
+                      🤝 Marcaste que ya tienes colaboración con este número — el bot no le escribe. Si te llega otro producto de este mismo contacto, escríbele tú a mano.
+                    </div>
+                  )}
                   {muted && (
                     <div
                       className="mt-2 px-2.5 py-2 rounded-lg text-[11px]"
