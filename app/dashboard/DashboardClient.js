@@ -20,8 +20,11 @@ const stageIndex = (key) => Math.max(0, STAGES.findIndex((s) => s.key === key));
 // mandado hasta lo cerrado, y al final los que necesitan que Irving haga algo.
 // Solo se pintan las que tienen al menos 1 contacto, para que no se llene de
 // burbujas vacías.
+const MUTED_KEY = "mudos";
+
 const LEAD_FILTERS = [
   { key: "todos", label: "Todos", color: "#22D3C0" },
+  { key: MUTED_KEY, label: "🔇 Sin contestar", color: "#FF5C5C" },
   { key: "nuevo", label: "Nuevos", color: "#8AB4F8" },
   { key: "escrito_enviado", label: "Enviados", color: "#22D3C0" },
   { key: "esperando", label: "Esperando", color: "#8B96A5" },
@@ -32,6 +35,29 @@ const LEAD_FILTERS = [
   { key: "cruzado", label: "Cruzados", color: "#F2B84B" },
   { key: "fallido", label: "Fallidos", color: "#F19999" },
 ];
+
+/** Detecta contactos MUDOS: la marca escribió y el bot todavía no ha contestado.
+ * Esto pasaba antes en silencio — el mensaje llegaba, el temporizador de respuesta
+ * se perdía por un reinicio del servidor, y el contacto se quedaba muerto sin que
+ * nadie se enterara. Ahora se ve aquí en rojo.
+ * Devuelve null si todo está normal. Se ignoran los pausados (esos ya los tomaste
+ * tú) y los cerrados, dormidos o fallidos. */
+function mutedInfo(lead) {
+  if (!lead || lead.paused) return null;
+  if (["cerrado", "dormant", "fallido"].includes(lead.status)) return null;
+  if (!lead.last_inbound_at) return null;
+
+  const inbound = new Date(lead.last_inbound_at).getTime();
+  const outbound = lead.last_outbound_at ? new Date(lead.last_outbound_at).getTime() : 0;
+  if (isNaN(inbound) || inbound <= outbound) return null; // ya se le contestó
+
+  const hours = (Date.now() - inbound) / 3600000;
+  // Menos de 1 hora es operación normal: el bot espera unos minutos a propósito
+  // para juntar mensajes seguidos, y el rescate automático entra a los 15 min.
+  if (hours < 1) return null;
+
+  return { hours: Math.round(hours), windowClosed: hours >= 24 };
+}
 
 /** Fecha corta (08/21) del último movimiento del contacto, con la fecha completa
  * en el tooltip. Se prefiere la fecha en que SALIÓ el último mensaje; si el lead
@@ -228,10 +254,11 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
 
   // Conteo en vivo por estado, para las burbujas de filtro.
   const leadCounts = useMemo(() => {
-    const counts = { todos: leads.length };
+    const counts = { todos: leads.length, [MUTED_KEY]: 0 };
     for (const lead of leads) {
       const key = lead.status || "nuevo";
       counts[key] = (counts[key] || 0) + 1;
+      if (mutedInfo(lead)) counts[MUTED_KEY] += 1;
     }
     return counts;
   }, [leads]);
@@ -241,10 +268,12 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
     [leadCounts]
   );
 
-  const filteredLeads = useMemo(
-    () => (leadFilter === "todos" ? leads : leads.filter((l) => (l.status || "nuevo") === leadFilter)),
-    [leads, leadFilter]
-  );
+  const filteredLeads = useMemo(() => {
+    if (leadFilter === "todos") return leads;
+    // "Sin contestar" no es un status guardado: se calcula comparando fechas.
+    if (leadFilter === MUTED_KEY) return leads.filter((l) => mutedInfo(l));
+    return leads.filter((l) => (l.status || "nuevo") === leadFilter);
+  }, [leads, leadFilter]);
 
   // Si el filtro activo se queda sin contactos (por ejemplo borraste el último
   // fallido), se regresa solo a "Todos" para que nunca quede una lista vacía.
@@ -812,6 +841,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
               const isCross = lead.status === "cruzado";
               const isFailed = lead.status === "fallido";
               const isDormant = lead.status === "dormant";
+              const muted = mutedInfo(lead);
               const fecha = leadDate(lead);
               return (
                 <div
@@ -819,7 +849,16 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                   className="rounded-xl p-4"
                   style={{
                     background: "#141B24",
-                    border: isFailed ? "1px solid #F19999" : isCross ? "1px solid #F2B84B" : lead.paused ? "1px solid #F2B84B" : "1px solid #232D3A",
+                    border: muted
+                      ? "1px solid #FF5C5C"
+                      : isFailed
+                      ? "1px solid #F19999"
+                      : isCross
+                      ? "1px solid #F2B84B"
+                      : lead.paused
+                      ? "1px solid #F2B84B"
+                      : "1px solid #232D3A",
+                    boxShadow: muted ? "0 0 0 1px #FF5C5C33, 0 0 14px #FF5C5C22" : "none",
                   }}
                 >
                   <div className="flex items-center justify-between">
@@ -920,6 +959,44 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                       )}
                     </div>
                   </div>
+                  {muted && (
+                    <div
+                      className="mt-2 px-2.5 py-2 rounded-lg text-[11px]"
+                      style={{ background: "#FF5C5C1A", color: "#FF9E9E", border: "1px solid #FF5C5C55" }}
+                    >
+                      <div style={{ fontWeight: 700 }}>
+                        🔇 La marca escribió hace {muted.hours}h y el bot todavía no le contesta.
+                      </div>
+                      <div style={{ marginTop: 3, lineHeight: 1.5 }}>
+                        {muted.windowClosed
+                          ? "La ventana de 24h de WhatsApp ya cerró — el bot ya no puede escribirle. Contéstalo tú a mano."
+                          : "El sistema lo va a reintentar solo. Si no se destraba, contéstalo a mano antes de que se cumplan 24h."}
+                      </div>
+                      <div className="flex gap-2 mt-2">
+                        <a
+                          href={waLink(lead.phone)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2 py-1 rounded-lg text-[10px] font-semibold"
+                          style={{ background: "#25D36622", color: "#25D366" }}
+                        >
+                          Contestar en WhatsApp ↗
+                        </a>
+                        <button
+                          onClick={() => {
+                            if (!window.confirm(`¿Tú te encargas de ${lead.phone}?\n\nEl bot se PAUSA para este contacto y deja de contestarle. Cuando quieras que vuelva a trabajarlo, pícale a "Pausado" para reactivarlo.`)) return;
+                            setLeads((prev) => prev.map((l) => (l.id === lead.id ? { ...l, paused: true } : l)));
+                            startTransition(() => toggleLeadPause(targetUserId, lead.id, true));
+                          }}
+                          className="px-2 py-1 rounded-lg text-[10px] font-semibold"
+                          style={{ background: "#8AB4F822", color: "#8AB4F8" }}
+                          title="Pausa el bot en este contacto y quita este aviso"
+                        >
+                          Yo me encargo
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {isFailed ? (
                     <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#2A1620", color: "#F19999" }}>
                       ❌ {lead.last_error || "La entrega del mensaje falló."}
