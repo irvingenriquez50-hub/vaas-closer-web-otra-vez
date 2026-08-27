@@ -315,10 +315,10 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
   }, [targetUserId]);
 
   // El admin ve 7 meses hacia atrás para poder retomar contactos viejos; los
-  // miembros siguen viendo los 150 días normales (el servidor lo recorta solo,
-  // aunque el navegador pida más).
+  // miembros ven 30 días. El número real lo pone el servidor — esto es solo lo
+  // que el navegador pide, y allá se recorta pase lo que pase.
   const loadCalendar = useCallback(async () => {
-    const data = await getDiscordCalendar(targetUserId, isAdmin ? 210 : 150);
+    const data = await getDiscordCalendar(targetUserId, isAdmin ? 210 : 30);
     setCalendar(data);
   }, [targetUserId, isAdmin]);
 

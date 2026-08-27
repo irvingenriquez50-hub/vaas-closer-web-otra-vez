@@ -24,14 +24,19 @@ async function resolveContext(requestedId) {
 }
 
 const digitsOf = (s) => (s || "").replace(/[^0-9]/g, "");
+const DIA_MS = 24 * 60 * 60 * 1000;
 
-export async function getDiscordCalendar(targetUserId, days = 150) {
+// CUÁNTO HISTORIAL VE CADA QUIEN — el número que manda, y está del lado del
+// servidor a propósito: aunque alguien manipule la página, aquí se recorta.
+//   Miembro: 30 días, fijo. No hay forma de pedir más.
+//   Admin:   hasta 400 días, para poder retomar contactos viejos.
+const MEMBER_DAYS = 30;
+const ADMIN_MAX_DAYS = 400;
+
+export async function getDiscordCalendar(targetUserId, days = MEMBER_DAYS) {
   const { isAdmin } = await resolveContext(targetUserId);
-  // Solo el admin puede pedir historial más profundo que los 150 días normales.
-  // Aunque el navegador mande otro número, aquí se recorta: un miembro nunca va
-  // a poder sacar los contactos viejos de hace medio año.
-  const safeDays = isAdmin ? Math.min(Math.max(Number(days) || 150, 30), 400) : 150;
-  const since = new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000);
+  const safeDays = isAdmin ? Math.min(Math.max(Number(days) || MEMBER_DAYS, 1), ADMIN_MAX_DAYS) : MEMBER_DAYS;
+  const since = new Date(Date.now() - safeDays * DIA_MS);
   const until = new Date();
 
   const url = `${process.env.DISCORD_BOT_URL}/contacts-summary?channelId=${process.env.DISCORD_CHANNEL_ID}&since=${since.toISOString()}&until=${until.toISOString()}`;
@@ -45,7 +50,18 @@ export async function getDiscordCalendar(targetUserId, days = 150) {
 // contacto ya estaba "rejected", lo regresa a "pending" — se puede recuperar.
 // Los que ya están "activated" u "ongoing" NUNCA se tocan ni regresan.
 export async function importDay(targetUserId, dateStr) {
-  const userId = await resolveTargetUserId(targetUserId);
+  const { userId, isAdmin } = await resolveContext(targetUserId);
+
+  // SEGUNDO CANDADO. No basta con esconder los días viejos del calendario: sin
+  // esto, un miembro podría pedir un día de hace 6 meses directamente y el
+  // servidor se lo daría. Aquí se rechaza cualquier día fuera de su ventana.
+  if (!isAdmin) {
+    const diaMs = new Date(`${dateStr}T00:00:00.000Z`).getTime();
+    if (isNaN(diaMs) || diaMs < Date.now() - MEMBER_DAYS * DIA_MS) {
+      return { error: `Ese día ya está fuera de tu ventana de ${MEMBER_DAYS} días.` };
+    }
+  }
+
   const supabase = createClient();
 
   const since = new Date(`${dateStr}T00:00:00.000Z`);
