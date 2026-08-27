@@ -32,6 +32,7 @@ const LEAD_FILTERS = [
   { key: "followup", label: "Follow-up", color: "#F2B84B" },
   { key: "negociando", label: "Negociando", color: "#C084FC" },
   { key: "cerrado", label: "Cerrados", color: "#34D399" },
+  { key: "checkback", label: "🔁 Seguimiento", color: "#8AB4F8" },
   { key: "dormant", label: "Dormidos", color: "#6B7684" },
   { key: "cruzado", label: "Cruzados", color: "#F2B84B" },
   { key: "fallido", label: "Fallidos", color: "#F19999" },
@@ -224,7 +225,7 @@ My TikTok Account: @${fields.tiktokHandle || "___"}
 — The VAAS Community`;
 }
 
-export default function DashboardClient({ targetUserId, isAdminView, profile, initialTiers, initialScript, initialLeads }) {
+export default function DashboardClient({ targetUserId, isAdminView, isAdmin = false, profile, initialTiers, initialScript, initialLeads }) {
   const [tab, setTab] = useState("escrito");
   const [scriptFields, setScriptFields] = useState({ ...emptyScriptFields, ...(initialScript || {}) });
   const [scriptSaved, setScriptSaved] = useState(true);
@@ -258,6 +259,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
   const [resettingDay, setResettingDay] = useState(null);
   const [resetResult, setResetResult] = useState(null);
   const [dayStatuses, setDayStatuses] = useState({});
+  const [openMonth, setOpenMonth] = useState(null);
 
   // Conteo en vivo por estado, para las burbujas de filtro.
   const leadCounts = useMemo(() => {
@@ -312,10 +314,13 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
     setLeadRequests(data);
   }, [targetUserId]);
 
+  // El admin ve 7 meses hacia atrás para poder retomar contactos viejos; los
+  // miembros siguen viendo los 150 días normales (el servidor lo recorta solo,
+  // aunque el navegador pida más).
   const loadCalendar = useCallback(async () => {
-    const data = await getDiscordCalendar(targetUserId);
+    const data = await getDiscordCalendar(targetUserId, isAdmin ? 210 : 150);
     setCalendar(data);
-  }, [targetUserId]);
+  }, [targetUserId, isAdmin]);
 
   const loadDayStatuses = useCallback(async () => {
     const data = await getDayStatuses(targetUserId);
@@ -572,6 +577,34 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
 
   const F_DISPLAY = "'Space Grotesk', sans-serif";
   const F_MONO = "'IBM Plex Mono', monospace";
+
+  // El calendario agrupado por mes. Con 7 meses de historial son ~200 burbujas
+  // de días, un muro imposible de leer — así le picas al mes y solo se abren sus
+  // días. Cada mes trae cuántos contactos tiene en total y cuántos siguen
+  // pendientes de revisar.
+  const calendarByMonth = useMemo(() => {
+    const map = new Map();
+    for (const day of calendar || []) {
+      const key = String(day.date || "").slice(0, 7);
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, { key, days: [], total: 0, pending: 0 });
+      const g = map.get(key);
+      g.days.push(day);
+      g.total += Number(day.count || 0);
+      const st = dayStatuses[day.date];
+      if (st && st.pending > 0) g.pending += st.pending;
+    }
+    const list = [...map.values()].sort((a, b) => (a.key < b.key ? 1 : -1));
+    for (const g of list) g.days.sort((a, b) => (a.date < b.date ? 1 : -1));
+    return list;
+  }, [calendar, dayStatuses]);
+
+  const monthLabelEs = (key) => {
+    const [y, m] = key.split("-").map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString("es-MX", { month: "long", year: "numeric" });
+  };
+
+  const activeMonth = openMonth ?? calendarByMonth[0]?.key ?? null;
 
   const groupedRequests = groupByDate(leadRequests);
 
@@ -914,6 +947,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
               const isCross = lead.status === "cruzado";
               const isFailed = lead.status === "fallido";
               const isDormant = lead.status === "dormant";
+              const isCheckback = lead.status === "checkback";
               const muted = mutedInfo(lead);
               const isCollab = isCollabLead(lead);
               const fecha = leadDate(lead);
@@ -927,6 +961,8 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                       ? "1px solid #FF5C5C"
                       : isCollab
                       ? "1px solid #34D39966"
+                      : isCheckback
+                      ? "1px solid #8AB4F855"
                       : isFailed
                       ? "1px solid #F19999"
                       : isCross
@@ -999,7 +1035,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                             Marcar resuelto
                           </button>
                         </>
-                      ) : isDormant ? (
+                      ) : isDormant || isCheckback ? (
                         <button
                           onClick={() => doRestartLead(lead.id)}
                           className="px-2 py-1 rounded-lg text-[10px] font-medium"
@@ -1099,10 +1135,30 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                     <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#F2B84B15", color: "#F2B84B" }}>
                       ⚠️ Colaboración cruzada — este número ya tiene historial con otro miembro. Revisa el WhatsApp antes de decidir.
                     </div>
-                  ) : isDormant ? (
-                    <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#1B2430", color: "#8B96A5" }}>
-                      😴 Nunca contestó después de los follow-ups — el bot lo dejó descansar. Se reintenta solo a los 30 días.
+                  ) : isCheckback ? (
+                    <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#8AB4F815", color: "#8AB4F8" }}>
+                      🔁 Seguimiento semanal {Number(lead.negotiation?.checkbackCount || 0)}/4 — dijeron que ahorita no hay nada pero que te avisan. El bot les pregunta cada 7 días.
                     </div>
+                  ) : isDormant ? (
+                    (() => {
+                      // A los 30 días el bot le da UNA segunda vuelta, pero solo a
+                      // quien nunca contestó nada. Si la marca llegó a escribir
+                      // (aunque haya sido un "no"), ya no se le vuelve a escribir.
+                      const contestaron = (lead.conversation || []).some((m) => m.role === "user");
+                      const yaTuvoSegunda = !!lead.dormant_followup_sent;
+                      const base = lead.last_outbound_at ? new Date(lead.last_outbound_at).getTime() : null;
+                      const faltan = base ? Math.max(0, 30 - Math.floor((Date.now() - base) / 86400000)) : null;
+                      const revive = !contestaron && !yaTuvoSegunda;
+                      return (
+                        <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#1B2430", color: revive ? "#8AB4F8" : "#8B96A5" }}>
+                          {revive
+                            ? `😴 Nunca contestó — el bot le manda el escrito otra vez ${faltan === 0 ? "en el próximo envío" : `en ${faltan} día${faltan === 1 ? "" : "s"}`}. Es su única segunda vuelta.`
+                            : contestaron
+                            ? "😴 Aquí sí hubo respuesta en su momento — el bot ya no le vuelve a escribir solo."
+                            : "😴 Ya tuvo su segunda vuelta a los 30 días — el bot ya no le escribe más."}
+                        </div>
+                      );
+                    })()
                   ) : (
                     <>
                       <div className="mt-3 flex items-center">
@@ -1117,6 +1173,9 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                         <span style={{ fontSize: 11, color: "#8B96A5" }}>
                           {STAGES[idx].label}
                           {lead.status === "followup" && lead.followup_count > 0 ? ` ${lead.followup_count}/4` : ""}
+                          {lead.status === "negociando" && lead.negotiation?.waiting
+                            ? ` · ⏳ confirmando con la marca${Number(lead.negotiation.waitingNudges || 0) > 0 ? ` (día ${lead.negotiation.waitingNudges}/3)` : ""}`
+                            : ""}
                         </span>
                         {idx < STAGES.length - 1 && (
                           <button
@@ -1165,15 +1224,44 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
         <div className="px-5 pt-4">
           <div className="rounded-xl p-4 mb-4" style={{ background: "#141B24", border: "1px solid #22D3C0" }}>
             <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 10 }}>
-              Calendario — toca un día para traer sus contactos. Recarga la página si mandaron contactos nuevos y no los ves.
+              Calendario — toca un mes y luego un día para traer sus contactos. Recarga la página si mandaron contactos nuevos y no los ves.
             </div>
             {calendarLoading ? (
               <div style={{ fontSize: 12, color: "#8B96A5" }}>Cargando calendario...</div>
             ) : calendar.length === 0 ? (
-              <div style={{ fontSize: 12, color: "#8B96A5" }}>No hay contactos en los últimos 5 meses.</div>
+              <div style={{ fontSize: 12, color: "#8B96A5" }}>No hay contactos en este periodo.</div>
             ) : (
+              <>
+              <div className="flex gap-1.5 flex-wrap mb-3">
+                {calendarByMonth.map((m) => {
+                  const abierto = activeMonth === m.key;
+                  return (
+                    <button
+                      key={m.key}
+                      onClick={() => setOpenMonth(abierto ? "__ninguno__" : m.key)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] font-semibold"
+                      style={
+                        abierto
+                          ? { background: "#8AB4F8", color: "#06110F", border: "1px solid #8AB4F8" }
+                          : { background: "#141B24", color: "#8AB4F8", border: "1px solid #8AB4F838" }
+                      }
+                    >
+                      <span style={{ textTransform: "capitalize" }}>{monthLabelEs(m.key)}</span>
+                      <span
+                        className="px-1.5 rounded-full text-[10px] font-bold"
+                        style={abierto ? { background: "#06110F22", color: "#06110F" } : { background: "#8AB4F81F", color: "#8AB4F8" }}
+                      >
+                        {m.total}
+                      </span>
+                      {m.pending > 0 && (
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#F19999" }} title={`${m.pending} pendientes de revisar`} />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
               <div className="flex gap-2 flex-wrap">
-                {calendar.map((day) => {
+                {(calendarByMonth.find((m) => m.key === activeMonth)?.days || []).map((day) => {
                   const d = new Date(`${day.date}T12:00:00Z`);
                   const label = d.toLocaleDateString("es-MX", { day: "numeric", month: "short" });
                   const isImporting = importingDay === day.date;
@@ -1238,6 +1326,7 @@ export default function DashboardClient({ targetUserId, isAdminView, profile, in
                   );
                 })}
               </div>
+              </>
             )}
             {resetResult && (
               <div className="mt-3 px-3 py-2 rounded-lg text-xs" style={{ background: "#22D3C022", color: "#22D3C0" }}>
