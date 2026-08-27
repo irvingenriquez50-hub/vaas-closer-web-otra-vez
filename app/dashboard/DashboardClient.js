@@ -611,8 +611,18 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
   return (
     <div className="min-h-screen w-full pb-16" style={{ background: "#0B0E14", color: "#EDEFF2" }}>
       {isAdminView && (
-        <div className="px-5 py-2 text-center text-xs" style={{ background: "#F2B84B22", color: "#F2B84B" }}>
-          Viendo como {profile?.name || profile?.email} (modo admin)
+        <div className="px-5 py-2 flex items-center justify-center gap-3 text-xs" style={{ background: "#F2B84B22", color: "#F2B84B" }}>
+          <span className="truncate">Viendo como {profile?.name || profile?.email} (modo admin)</span>
+          {/* Estando dentro de la cuenta de alguien más, el botón de "Salir" se
+              esconde y no quedaba forma de regresar sin usar el atrás del
+              navegador. Este botón siempre está a la vista. */}
+          <button
+            onClick={() => (window.location.href = "/admin")}
+            className="px-2 py-1 rounded-lg font-semibold whitespace-nowrap flex-shrink-0"
+            style={{ background: "#F2B84B", color: "#1A1608" }}
+          >
+            ← Volver al admin
+          </button>
         </div>
       )}
 
