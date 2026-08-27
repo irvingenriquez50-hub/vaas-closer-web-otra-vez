@@ -2,23 +2,36 @@
 import { createClient } from "@/lib/supabase/server";
 
 async function resolveTargetUserId(requestedId) {
+  const { userId } = await resolveContext(requestedId);
+  return userId;
+}
+
+/** Igual que resolveTargetUserId, pero además dice si QUIEN ESTÁ VIENDO es el
+ * admin — no de quién es la cuenta. Se usa para el historial profundo del
+ * calendario, que solo el admin puede pedir. */
+async function resolveContext(requestedId) {
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error("No autenticado");
+  const isAdmin = user.email === process.env.NEXT_PUBLIC_ADMIN_EMAIL;
   if (requestedId && requestedId !== user.id) {
-    if (user.email !== process.env.NEXT_PUBLIC_ADMIN_EMAIL) throw new Error("No autorizado");
-    return requestedId;
+    if (!isAdmin) throw new Error("No autorizado");
+    return { userId: requestedId, isAdmin };
   }
-  return user.id;
+  return { userId: user.id, isAdmin };
 }
 
 const digitsOf = (s) => (s || "").replace(/[^0-9]/g, "");
 
-export async function getDiscordCalendar(targetUserId) {
-  await resolveTargetUserId(targetUserId);
-  const since = new Date(Date.now() - 150 * 24 * 60 * 60 * 1000);
+export async function getDiscordCalendar(targetUserId, days = 150) {
+  const { isAdmin } = await resolveContext(targetUserId);
+  // Solo el admin puede pedir historial más profundo que los 150 días normales.
+  // Aunque el navegador mande otro número, aquí se recorta: un miembro nunca va
+  // a poder sacar los contactos viejos de hace medio año.
+  const safeDays = isAdmin ? Math.min(Math.max(Number(days) || 150, 30), 400) : 150;
+  const since = new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000);
   const until = new Date();
 
   const url = `${process.env.DISCORD_BOT_URL}/contacts-summary?channelId=${process.env.DISCORD_CHANNEL_ID}&since=${since.toISOString()}&until=${until.toISOString()}`;
