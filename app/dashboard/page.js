@@ -29,6 +29,7 @@ export default async function DashboardPage({ searchParams }) {
     <DashboardClient
       targetUserId={targetUserId}
       isAdminView={isAdminView}
+      isAdmin={isAdmin}
       profile={profile}
       initialTiers={tiers || []}
       initialScript={{
