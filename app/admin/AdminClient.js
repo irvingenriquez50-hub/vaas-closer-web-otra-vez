@@ -95,7 +95,7 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
             <div style={{ fontSize: 20, fontWeight: 700, color: "#F2B84B" }}>${totalRevenueThisMonth.toLocaleString()}</div>
           </div>
           <div className="rounded-xl p-3" style={{ background: "#141B24", border: totalCrossFlags > 0 ? "1px solid #F2B84B" : "1px solid #232D3A" }}>
-            <div style={{ fontSize: 10, color: "#8B96A5" }}>⚠️ Colaboraciones cruzadas</div>
+            <div style={{ fontSize: 10, color: "#8B96A5" }}>Contactos por revisar</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: totalCrossFlags > 0 ? "#F2B84B" : "#8B96A5" }}>{totalCrossFlags}</div>
           </div>
         </div>
@@ -155,7 +155,7 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
                         className="px-3 py-1.5 rounded-lg text-xs font-medium text-center"
                         style={{ background: "#1B2430", color: "#EDEFF2" }}
                       >
-                        Ver como →
+                        Ver como miembro →
                       </a>
                       <button
                         onClick={() => startTransition(() => deactivateUser(u.id))}
@@ -193,7 +193,7 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
                   </div>
                   {stats.crossFlags > 0 && (
                     <div className="px-2 py-1 rounded-md text-[10px]" style={{ background: "#F2B84B22", color: "#F2B84B" }}>
-                      ⚠️ {stats.crossFlags} cruzada{stats.crossFlags > 1 ? "s" : ""}
+                      ⚠️ {stats.crossFlags} por revisar
                     </div>
                   )}
                 </div>

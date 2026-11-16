@@ -3,6 +3,7 @@ import { useState, useTransition, useEffect, useCallback, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client";
 import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, removeLead, restartLead, resolveLeadManually, markAsCollab } from "./actions";
 
+import AutopilotPanel from './AutopilotPanel';
 import ConnectionCard from "./ConnectionCard";
 import { useRouter } from "next/navigation";
 import { getDiscordCalendar, importDay, listLeadRequests, activateLeadRequest, rejectLeadRequest, markOngoingRequest, resetDayRequests, getDayStatuses } from "./discord-actions";
@@ -25,7 +26,7 @@ const STRINGS = {
   tab_escrito: { es: "Tu escrito", en: "Your script" },
   tab_precios: { es: "Precios", en: "Pricing" },
   tab_cola: { es: "Cola de contactos", en: "Contact queue" },
-  tab_revision: { es: "Revisión", en: "Review" },
+  tab_revision: { es: "Contactos", en: "Contacts" },
 
   // WhatsApp
   wa_connected: { es: "WhatsApp conectado ✓", en: "WhatsApp connected ✓" },
@@ -119,7 +120,7 @@ const STRINGS = {
   ill_handle_title: { es: "Pausa el bot en este contacto y quita este aviso", en: "Pauses the bot on this contact and removes this warning" },
   ill_handle_confirm: { es: '¿Tú te encargas de {phone}?\n\nEl bot se PAUSA para este contacto y deja de contestarle. Cuando quieras que vuelva a trabajarlo, pícale a "Pausado" para reactivarlo.', en: 'Are you handling {phone}?\n\nThe bot PAUSES on this contact and stops replying. When you want it back on the job, tap "Paused" to reactivate it.' },
   delivery_failed: { es: "La entrega del mensaje falló.", en: "Message delivery failed." },
-  cross_banner: { es: "⚠️ Colaboración cruzada — este número ya tiene historial con otro miembro. Revisa el WhatsApp antes de decidir.", en: "⚠️ Cross-member collab — this number already has history with another member. Check WhatsApp before deciding." },
+  cross_banner: { es: "Revisa tu conversación de WhatsApp antes de volver a escribir.", en: "Review your WhatsApp conversation before sending again." },
   checkback_banner: { es: "🔁 Seguimiento semanal {n}/4 — dijeron que ahorita no hay nada pero que te avisan. El bot les pregunta cada 7 días.", en: "🔁 Weekly check-in {n}/4 — they said there's nothing right now but they'll let you know. The bot asks every 7 days." },
   dormant_revive: { es: "😴 Nunca contestó — el bot le manda el escrito otra vez {when}. Es su única segunda vuelta.", en: "😴 Never replied — the bot sends the script again {when}. This is their only second round." },
   dormant_next_send: { es: "en el próximo envío", en: "on the next send" },
@@ -188,7 +189,7 @@ const STRINGS = {
   fl_cerrado: { es: "Cerrados", en: "Closed" },
   fl_checkback: { es: "🔁 Seguimiento", en: "🔁 Check-in" },
   fl_dormant: { es: "Dormidos", en: "Asleep" },
-  fl_cruzado: { es: "Cruzados", en: "Cross-member" },
+  fl_cruzado: { es: "Por revisar", en: "Needs review" },
   fl_fallido: { es: "Fallidos", en: "Failed" },
   fl_colab: { es: "🤝 Ya tengo colab", en: "🤝 Already collab" },
 };
@@ -316,7 +317,7 @@ function RequestCard({ req, onActivate, onReject, onOngoing, F_MONO, t }) {
   return (
     <div
       className="rounded-xl p-4"
-      style={{ background: "#141B24", border: req.cross_member ? "1px solid #F2B84B" : "1px solid #232D3A" }}
+      style={{ background: "#141B24", border: "1px solid #232D3A" }}
     >
       <div className="flex items-center justify-between mb-2">
         <div style={{ fontFamily: F_MONO, fontSize: 14, fontWeight: 600 }}>{req.phone}</div>
@@ -335,7 +336,7 @@ function RequestCard({ req, onActivate, onReject, onOngoing, F_MONO, t }) {
         {req.videos_text && <div>{req.videos_text}</div>}
         {req.price_text && <div>{req.price_text}</div>}
       </div>
-      {req.cross_member && (
+      {false && (
         <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#F2B84B15", color: "#F2B84B" }}>
           {t("rc_cross")}
         </div>
@@ -523,7 +524,7 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
   }, [targetUserId]);
 
   useEffect(() => {
-    if (tab !== "revision") return;
+    if (tab !== "legacy-review") return;
     setCalendarLoading(true);
     Promise.all([loadLeadRequests(), loadCalendar(), loadDayStatuses()]).then(() => setCalendarLoading(false));
   }, [tab, loadLeadRequests, loadCalendar, loadDayStatuses]);
@@ -608,20 +609,9 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
   };
 
   const doRestartLead = (leadId) => {
-    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, status: "nuevo", paused: false } : l)));
-    startTransition(() => restartLead(targetUserId, leadId));
+    startTransition(async()=>{try{await restartLead(targetUserId,leadId);router.refresh();}catch(e){setLeadError(e.message);}});
   };
-
-  // Para leads con status "fallido" (Meta/WhatsApp rechazó la entrega): se borra
-  // por completo y su número se precarga en la cajita de arriba, como si fuera
-  // nuevo — con el checkbox y todas las opciones libres para agregarlo de nuevo.
-  const doReiniciarFallido = (lead) => {
-    setLeads((prev) => prev.filter((l) => l.id !== lead.id));
-    setPhoneInput(lead.phone);
-    setNeedsAutoSend(false);
-    setLeadError("");
-    startTransition(() => removeLead(targetUserId, lead.id));
-  };
+  const doReiniciarFallido = (lead) => {doRestartLead(lead.id);};
 
   // "Ya tengo colaboración con este número": lo deja cerrado y pausado, y el bot
   // ya nunca le escribe. Sirve tanto para un contacto que ya está en la cola como
@@ -808,7 +798,7 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
           ["escrito", "tab_escrito"],
           ["precios", "tab_precios"],
           ["cola", "tab_cola"],
-          ["revision", "tab_revision"],
+          ["contacts", "tab_revision"],
         ].map(([key, labelKey]) => (
           <button
             key={key}
@@ -826,6 +816,8 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
         {connectionResult==='success' && <p className="mx-5 mt-4 text-emerald-300 text-sm">Número conectado. Revisa los pasos pendientes antes de activar tu bot.</p>}
         <ConnectionCard userId={targetUserId} onProfile={()=>setTab('escrito')} onPrices={()=>setTab('precios')} />
       </>}
+
+      {(tab === "contacts" || tab === "revision") && <AutopilotPanel userId={targetUserId}/>}
 
       {tab === "escrito" && (
         <div className="px-5 pt-4">
@@ -1356,157 +1348,6 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
         </div>
       )}
 
-      {tab === "revision" && (
-        <div className="px-5 pt-4">
-          <div className="rounded-xl p-4 mb-4" style={{ background: "#141B24", border: "1px solid #22D3C0" }}>
-            <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 10 }}>
-              {t("calendar_intro")}
-            </div>
-            {calendarLoading ? (
-              <div style={{ fontSize: 12, color: "#8B96A5" }}>{t("calendar_loading")}</div>
-            ) : calendar.length === 0 ? (
-              <div style={{ fontSize: 12, color: "#8B96A5" }}>{t("calendar_empty")}</div>
-            ) : (
-              <>
-              <div className="flex gap-1.5 flex-wrap mb-3">
-                {calendarByMonth.map((m) => {
-                  const abierto = activeMonth === m.key;
-                  return (
-                    <button
-                      key={m.key}
-                      onClick={() => setOpenMonth(abierto ? "__ninguno__" : m.key)}
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] font-semibold"
-                      style={
-                        abierto
-                          ? { background: "#8AB4F8", color: "#06110F", border: "1px solid #8AB4F8" }
-                          : { background: "#141B24", color: "#8AB4F8", border: "1px solid #8AB4F838" }
-                      }
-                    >
-                      <span style={{ textTransform: "capitalize" }}>{monthLabel(m.key)}</span>
-                      <span
-                        className="px-1.5 rounded-full text-[10px] font-bold"
-                        style={abierto ? { background: "#06110F22", color: "#06110F" } : { background: "#8AB4F81F", color: "#8AB4F8" }}
-                      >
-                        {m.total}
-                      </span>
-                      {m.pending > 0 && (
-                        <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#F19999" }} title={t("month_pending_title", { n: m.pending })} />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                {(calendarByMonth.find((m) => m.key === activeMonth)?.days || []).map((day) => {
-                  const d = new Date(`${day.date}T12:00:00Z`);
-                  const label = d.toLocaleDateString(localeOf(lang), { day: "numeric", month: "short" });
-                  const isImporting = importingDay === day.date;
-                  const isResetting = resettingDay === day.date;
-
-                  // Verde = ya se procesaron todos los contactos de ese día.
-                  // Rojo  = todavía quedan pendientes por revisar.
-                  // Gris  = ese día ni siquiera se ha importado todavía.
-                  const st = dayStatuses[day.date];
-                  const done = st && st.total > 0 && st.pending === 0;
-                  const hasPending = st && st.pending > 0;
-                  const accent = done ? "#34D399" : hasPending ? "#F19999" : "#232D3A";
-                  const glow = done
-                    ? "0 0 0 1px #34D39955, 0 0 10px #34D39933"
-                    : hasPending
-                    ? "0 0 0 1px #F1999955, 0 0 10px #F1999933"
-                    : "none";
-
-                  return (
-                    <div
-                      key={day.date}
-                      className="flex items-stretch rounded-lg overflow-hidden"
-                      style={{ border: `1px solid ${accent}`, boxShadow: glow }}
-                      title={done ? t("day_done_title") : hasPending ? t("day_pending_title", { n: st.pending }) : t("day_not_imported_title")}
-                    >
-                      <button
-                        onClick={() => doImportDay(day.date)}
-                        disabled={isImporting}
-                        className="px-3 py-2 text-xs font-medium flex items-center gap-1.5"
-                        style={{ background: "#0B0E14", color: "#EDEFF2" }}
-                      >
-                        <span style={{ textTransform: "capitalize" }}>{isImporting ? t("loading") : label}</span>
-                        <span
-                          className="px-1.5 rounded-full text-[10px] font-bold"
-                          style={
-                            done
-                              ? { background: "#34D39922", color: "#34D399" }
-                              : hasPending
-                              ? { background: "#F1999922", color: "#F19999" }
-                              : { background: "#22D3C022", color: "#22D3C0" }
-                          }
-                        >
-                          {day.count}
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => doResetDay(day.date, label)}
-                        disabled={isResetting}
-                        title={t("reset_day_title")}
-                        className="px-2.5 flex items-center justify-center text-xs"
-                        style={{ background: "#1B2430", color: "#F2B84B", borderLeft: `1px solid ${accent}` }}
-                      >
-                        {isResetting ? "..." : "↺"}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-              </>
-            )}
-            {resetResult && (
-              <div className="mt-3 px-3 py-2 rounded-lg text-xs" style={{ background: "#22D3C022", color: "#22D3C0" }}>
-                {t("reset_result", { n: resetResult.reset, s: resetResult.reset === 1 ? "" : "s" })}
-                {resetResult.protected > 0
-                  ? t("reset_protected", { n: resetResult.protected, s: resetResult.protected === 1 ? "" : "s" })
-                  : "."}
-              </div>
-            )}
-          </div>
-
-          {leadRequests.length === 0 && (
-            <div className="text-sm text-center py-10" style={{ color: "#8B96A5" }}>
-              {t("nothing_to_review")}
-            </div>
-          )}
-
-          {groupedRequests.map(([dateLabel, reqs]) => (
-            <div key={dateLabel} className="mb-6">
-              <div
-                className="flex items-center gap-2 mb-3 pb-2"
-                style={{ borderBottom: "1px solid #1B2430" }}
-              >
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#8AB4F8", textTransform: "capitalize" }}>
-                  {dateLabel}
-                </div>
-                <div
-                  className="px-2 py-0.5 rounded-full text-[10px] font-bold"
-                  style={{ background: "#8AB4F822", color: "#8AB4F8" }}
-                >
-                  {reqs.length}
-                </div>
-              </div>
-              <div className="flex flex-col gap-3">
-                {reqs.map((req) => (
-                  <RequestCard
-                    key={req.id}
-                    req={req}
-                    onActivate={(sent) => doActivateRequest(req, sent)}
-                    onReject={() => doRejectRequest(req.id)}
-                    onOngoing={() => doOngoingRequest(req.id)}
-                    F_MONO={F_MONO}
-                    t={t}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
