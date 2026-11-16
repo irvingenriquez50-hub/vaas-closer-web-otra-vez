@@ -1,4 +1,5 @@
 "use server";
+import {engineRequest} from "@/lib/engine";
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 
@@ -24,13 +25,13 @@ async function findLeadByPhone(supabase, userId, phoneRaw) {
   const digits = digitsOf(phoneRaw);
   if (digits.length < 7) return null;
   const { data } = await supabase.from("leads").select("*").eq("user_id", userId);
-  return (data || []).find((l) => digitsOf(l.phone).slice(-8) === digits.slice(-8)) || null;
+  return (data || []).find((l) => digitsOf(l.phone) === digits) || null;
 }
 
 export async function saveScript(targetUserId, fields) {
   const userId = await resolveTargetUserId(targetUserId);
   const supabase = createClient();
-  await supabase.from("scripts").upsert({
+  const {error}=await supabase.from("scripts").upsert({
     user_id: userId,
     gmv_total: fields.gmvTotal || "",
     market: fields.market || "",
@@ -38,12 +39,14 @@ export async function saveScript(targetUserId, fields) {
     gmv_30d: fields.gmv30d || "",
     tiktok_handle: fields.tiktokHandle || "",
   });
+  if(error) throw new Error("No se pudo guardar tu perfil.");
   revalidatePath("/dashboard");
 }
 
 export async function savePricing(targetUserId, tiers) {
   const userId = await resolveTargetUserId(targetUserId);
   const supabase = createClient();
+  if(!Array.isArray(tiers) || tiers.some(t=>!Number.isInteger(Number(t.videos)) || Number(t.videos)<=0 || !Number.isFinite(Number(t.anchor)) || !Number.isFinite(Number(t.floor)) || Number(t.floor)<=0 || Number(t.anchor)<Number(t.floor) || (t.medio!=null && (!Number.isFinite(Number(t.medio)) || Number(t.medio)<Number(t.floor) || Number(t.medio)>Number(t.anchor))))) throw new Error("Revisa tus precios: mínimo mayor que cero y menor o igual al precio inicial.");
   const rows = tiers.map((t) => ({
     user_id: userId,
     videos: t.videos,
@@ -51,7 +54,8 @@ export async function savePricing(targetUserId, tiers) {
     medio: t.medio ?? null,
     floor: t.floor,
   }));
-  await supabase.from("pricing_tiers").upsert(rows, { onConflict: "user_id,videos" });
+  const {error}=await supabase.from("pricing_tiers").upsert(rows, { onConflict: "user_id,videos" });
+  if(error) throw new Error("No se pudieron guardar tus precios.");
   revalidatePath("/dashboard");
 }
 
@@ -71,15 +75,12 @@ export async function addLead(targetUserId, phoneRaw, skipMessage1 = false) {
     };
   }
 
-  const res = await fetch(`${process.env.BOT_ENGINE_URL}/add-lead/${userId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ phone: phoneRaw, skipMessage1 }),
-  });
-  const data = await res.json();
+  let data;
+  try {data=await engineRequest('/add-lead/'+userId,{method:'POST',body:{phone:phoneRaw,skipMessage1}});}
+  catch(e){return {error:e.message};}
   if (!data.ok) return { error: data.error || "No se pudo agregar el número." };
   revalidatePath("/dashboard");
-  return { ok: true };
+  return { ok: true, lead: data.lead };
 }
 
 /** "Ya tengo colaboración con este número."

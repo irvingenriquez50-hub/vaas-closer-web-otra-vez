@@ -2,7 +2,9 @@
 import { useState, useTransition, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, removeLead, restartLead, resolveLeadManually, markAsCollab } from "./actions";
-import { connectWhatsapp, whatsappStatus, resetWhatsapp } from "./whatsapp-actions";
+
+import ConnectionCard from "./ConnectionCard";
+import { useRouter } from "next/navigation";
 import { getDiscordCalendar, importDay, listLeadRequests, activateLeadRequest, rejectLeadRequest, markOngoingRequest, resetDayRequests, getDayStatuses } from "./discord-actions";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -40,7 +42,7 @@ const STRINGS = {
 
   // Tu escrito
   script_intro: {
-    es: "Estos datos rellenan el mensaje 1 (el que el bot manda a cada número nuevo) — el texto en sí ya está aprobado por WhatsApp, tú solo llenas tus datos.",
+    es: "Estos datos rellenan el mensaje 1 (el que el bot manda a cada número nuevo) — la aprobación del mensaje se comprueba en la pestaña WhatsApp.",
     en: "These fields fill in message 1 (the one the bot sends to every new number) — the text itself is already approved by WhatsApp, you just fill in your data.",
   },
   f_gmv_total: { es: "GMV total (ej. 2M)", en: "Total GMV (e.g. 2M)" },
@@ -416,7 +418,7 @@ My TikTok Account: @${fields.tiktokHandle || "___"}
 — The VAAS Community`;
 }
 
-export default function DashboardClient({ targetUserId, isAdminView, isAdmin = false, profile, initialTiers, initialScript, initialLeads }) {
+export default function DashboardClient({ targetUserId, isAdminView, isAdmin = false, profile, initialTiers, initialScript, initialLeads, connectionResult }) {
   const [lang, setLang] = useState("es");
 
   /** Saca el texto en el idioma activo y rellena los {huecos}. */
@@ -436,7 +438,8 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
     if (typeof window !== "undefined") localStorage.setItem("vaas-lang", l);
   };
 
-  const [tab, setTab] = useState("escrito");
+  const [tab, setTab] = useState("whatsapp");
+  const router=useRouter();
   const [scriptFields, setScriptFields] = useState({ ...emptyScriptFields, ...(initialScript || {}) });
   const [scriptSaved, setScriptSaved] = useState(true);
 
@@ -452,15 +455,14 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
   const [tableUpdated, setTableUpdated] = useState(false);
 
   const [leads, setLeads] = useState(initialLeads || []);
+  useEffect(()=>setLeads(initialLeads || []),[initialLeads]);
+  useEffect(()=>{const timer=setInterval(()=>router.refresh(),30000);return()=>clearInterval(timer);},[router]);
   const [phoneInput, setPhoneInput] = useState("");
   const [addCountry, setAddCountry] = useState("other");
   const [leadError, setLeadError] = useState("");
   const [pending, startTransition] = useTransition();
   const [leadFilter, setLeadFilter] = useState("todos");
 
-  const [waConnected, setWaConnected] = useState(false);
-  const [waLoading, setWaLoading] = useState(false);
-  const [waError, setWaError] = useState("");
 
   const [leadRequests, setLeadRequests] = useState([]);
   const [calendar, setCalendar] = useState([]);
@@ -501,23 +503,6 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
   useEffect(() => {
     if (leadFilter !== "todos" && (leadCounts[leadFilter] || 0) === 0) setLeadFilter("todos");
   }, [leadCounts, leadFilter]);
-
-  const checkWaStatus = useCallback(async () => {
-    try {
-      const res = await whatsappStatus(targetUserId);
-      setWaConnected(!!res.connected);
-      setWaError("");
-    } catch (err) {
-      console.error("Error consultando estado de WhatsApp:", err);
-      setWaError(err?.message || STRINGS.wa_engine_error[lang]);
-    }
-  }, [targetUserId, lang]);
-
-  useEffect(() => {
-    checkWaStatus();
-    const interval = setInterval(checkWaStatus, 4000);
-    return () => clearInterval(interval);
-  }, [checkWaStatus]);
 
   const loadLeadRequests = useCallback(async () => {
     const data = await listLeadRequests(targetUserId);
@@ -568,32 +553,17 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
     });
   };
 
-  const doConnectWhatsapp = async () => {
-    setWaLoading(true);
-    await connectWhatsapp(targetUserId);
-    await checkWaStatus();
-    setWaLoading(false);
-  };
-
-  const doResetWhatsapp = async () => {
-    if (!confirm(t("wa_refresh_confirm"))) return;
-    setWaLoading(true);
-    await resetWhatsapp(targetUserId);
-    await checkWaStatus();
-    setWaLoading(false);
-  };
-
   const doSaveScript = () => {
     startTransition(async () => {
-      await saveScript(targetUserId, scriptFields);
-      setScriptSaved(true);
+      try {await saveScript(targetUserId, scriptFields);setScriptSaved(true);}
+      catch(error){window.alert(error.message);}
     });
   };
 
   const doSavePricing = () => {
     startTransition(async () => {
-      await savePricing(targetUserId, tiers);
-      setTiersSaved(true);
+      try {await savePricing(targetUserId, tiers);setTiersSaved(true);}
+      catch(error){window.alert(error.message);}
     });
   };
 
@@ -631,7 +601,8 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
       } else {
         setLeadError("");
         setPhoneInput("");
-        setLeads((l) => [{ id: crypto.randomUUID(), phone: normalized, status: skipMessage1 ? "esperando" : "nuevo", timezone: addCountry, paused: false, updated_at: new Date().toISOString(), created_at: new Date().toISOString() }, ...l]);
+        setLeads((leads) => res.lead ? [res.lead, ...leads.filter(l=>l.id!==res.lead.id)] : leads);
+        router.refresh();
       }
     });
   };
@@ -675,27 +646,17 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
         setPhoneInput("");
         setLeads((prev) => {
           const digits = (phoneRaw || "").replace(/[^0-9]/g, "");
-          const yaEsta = prev.some((l) => (l.phone || "").replace(/[^0-9]/g, "").slice(-8) === digits.slice(-8));
+          const yaEsta = prev.some((l) => (l.phone || "").replace(/[^0-9]/g, "") === digits);
           if (yaEsta) {
             return prev.map((l) =>
-              (l.phone || "").replace(/[^0-9]/g, "").slice(-8) === digits.slice(-8)
+              (l.phone || "").replace(/[^0-9]/g, "") === digits
                 ? { ...l, status: "cerrado", paused: true, negotiation: { ...(l.negotiation || {}), manualCollab: true } }
                 : l
             );
           }
-          return [
-            {
-              id: crypto.randomUUID(),
-              phone: phoneRaw,
-              status: "cerrado",
-              paused: true,
-              negotiation: { manualCollab: true },
-              updated_at: new Date().toISOString(),
-              created_at: new Date().toISOString(),
-            },
-            ...prev,
-          ];
+          return prev;
         });
+        router.refresh();
       }
     });
   };
@@ -719,17 +680,7 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
     startTransition(async () => {
       const applySuccess = () => {
         setLeadRequests((prev) => prev.filter((r) => r.id !== req.id));
-        setLeads((prev) => [
-          {
-            id: crypto.randomUUID(),
-            phone: req.phone,
-            status: skipMessage1 ? "esperando" : "nuevo",
-            paused: false,
-            updated_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-          },
-          ...prev,
-        ]);
+        router.refresh();
         loadDayStatuses();
       };
 
@@ -870,47 +821,11 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
         ))}
       </div>
 
-      {tab === "whatsapp" && (
-        <div className="px-5 pt-4 flex flex-col items-center text-center">
-          {waError && (
-            <div className="w-full mb-3 px-3 py-2 rounded-lg text-xs" style={{ background: "#2A1620", color: "#F19999", border: "1px solid #4A2530" }}>
-              {waError}
-            </div>
-          )}
-          {waConnected ? (
-            <div className="w-full rounded-xl p-6" style={{ background: "#141B24", border: "1px solid #34D399" }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: "#34D399" }}>{t("wa_connected")}</div>
-              <div style={{ fontSize: 12, color: "#8B96A5", marginTop: 6 }}>
-                {t("wa_connected_sub")}
-              </div>
-            </div>
-          ) : (
-            <div className="w-full rounded-xl p-6" style={{ background: "#141B24", border: "1px solid #232D3A" }}>
-              <div style={{ fontSize: 13, color: "#8B96A5", marginBottom: 14 }}>
-                {t("wa_not_active")}
-              </div>
-              <button
-                onClick={doConnectWhatsapp}
-                disabled={waLoading}
-                className="px-4 py-2.5 rounded-xl font-semibold text-sm"
-                style={{ background: "#22D3C0", color: "#06110F" }}
-              >
-                {waLoading ? t("wa_activating") : t("wa_activate")}
-              </button>
-            </div>
-          )}
-
-          {!waLoading && (
-            <button
-              onClick={doResetWhatsapp}
-              className="mt-4 text-xs"
-              style={{ color: "#8B96A5", textDecoration: "underline" }}
-            >
-              {t("wa_refresh")}
-            </button>
-          )}
-        </div>
-      )}
+      {tab === "whatsapp" && <>
+        {connectionResult==='retry' && <p role="alert" className="mx-5 mt-4 text-amber-300 text-sm">La conexión no se completó. Vuelve a conectar WhatsApp desde aquí.</p>}
+        {connectionResult==='success' && <p className="mx-5 mt-4 text-emerald-300 text-sm">Número conectado. Revisa los pasos pendientes antes de activar tu bot.</p>}
+        <ConnectionCard userId={targetUserId} onProfile={()=>setTab('escrito')} onPrices={()=>setTab('precios')} />
+      </>}
 
       {tab === "escrito" && (
         <div className="px-5 pt-4">
@@ -1348,7 +1263,7 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
                       </div>
                     </div>
                   )}
-                  {isFailed ? (
+                  {isFailed || lead.last_error ? (
                     <div className="mt-2 px-2.5 py-1.5 rounded-lg text-[11px]" style={{ background: "#2A1620", color: "#F19999" }}>
                       ❌ {lead.last_error || t("delivery_failed")}
                     </div>
