@@ -31,7 +31,7 @@ const DIA_MS = 24 * 60 * 60 * 1000;
 // servidor a propósito: aunque alguien manipule la página, aquí se recorta.
 //   Miembro: 30 días, fijo. No hay forma de pedir más.
 //   Admin:   hasta 400 días, para poder retomar contactos viejos.
-const MEMBER_DAYS = 30;
+const MEMBER_DAYS = 60;
 const ADMIN_MAX_DAYS = 400;
 
 export async function getDiscordCalendar(targetUserId, days = MEMBER_DAYS) {
@@ -80,7 +80,7 @@ export async function importDay(targetUserId, dateStr) {
     .eq("user_id", userId);
   const existingMap = new Map((existingRows || []).map((r) => [r.discord_message_id, r.status]));
 
-  const { data: allLeads } = await supabase.from("leads").select("user_id,phone").neq("user_id", userId);
+
 
   let count = 0;
   for (const c of data.contacts) {
@@ -89,10 +89,7 @@ export async function importDay(targetUserId, dateStr) {
     if (currentStatus === "activated" || currentStatus === "ongoing" || currentStatus === "pending") continue;
 
     const digits = c.phone.replace(/[^0-9]/g, "");
-    const cross = (allLeads || []).some((l) => {
-      const leadDigits = (l.phone || "").replace(/[^0-9]/g, "");
-      return leadDigits && digits === leadDigits;
-    });
+
 
     const row = {
       user_id: userId,
@@ -102,7 +99,7 @@ export async function importDay(targetUserId, dateStr) {
       videos_text: c.videos_text,
       price_text: c.price_text,
       message_created_at: c.created_at,
-      cross_member: cross,
+      cross_member: false,
       status: "pending",
     };
 
@@ -186,39 +183,9 @@ async function findExistingHistory(supabase, userId, phone) {
 // se regresa el detalle para que Irving decida. Con force=true, el lead existente
 // se REINICIA (status nuevo o esperando) en vez de crear uno duplicado — el chat
 // guardado NO se borra, solo se le da otra vuelta.
-export async function activateLeadRequest(targetUserId, requestId, phone, skipMessage1 = true, force = false) {
-  const userId = await resolveTargetUserId(targetUserId);
-  const supabase = createClient();
-
-  const history = await findExistingHistory(supabase, userId, phone);
-
-  if (history && !force) {
-    return { needsDecision: true, history };
-  }
-
-  if (history && history.leadId) {
-    // Reinicio del lead que ya existe: se le da otra vuelta sin borrar el chat.
-    // Si Irving va a mandar el mensaje a mano (skipMessage1), queda "esperando";
-    // si lo manda el bot, queda "nuevo" y el sweep manda el template en la
-    // próxima ventana de envío.
-    const patch = skipMessage1
-      ? { status: "esperando", paused: false, negotiation: null, followup_count: 0, last_outbound_at: new Date().toISOString() }
-      : { status: "nuevo", paused: false, negotiation: null, followup_count: 0 };
-    const { error } = await supabase.from("leads").update(patch).eq("id", history.leadId).eq("user_id", userId);
-    if (error) return { error: `No se pudo reiniciar el chat existente: ${error.message}` };
-
-    await supabase.from("lead_requests").update({ status: "activated" }).eq("id", requestId).eq("user_id", userId);
-    return { ok: true, restarted: true };
-  }
-
-  // No hay lead previo (o solo había trato cerrado sin chat): flujo normal.
-  let data;
-  try {data=await engineRequest('/add-lead/'+userId,{method:'POST',body:{phone:phone,skipMessage1}});}
-  catch(e){return {error:e.message};}
-  if (!data.ok) return { error: data.error || "No se pudo activar el contacto." };
-
-  await supabase.from("lead_requests").update({ status: "activated" }).eq("id", requestId).eq("user_id", userId);
-  return { ok: true };
+export async function activateLeadRequest(targetUserId) {
+ await resolveTargetUserId(targetUserId);
+ return {error:'Usa la nueva sección Contactos para revisar y poner este número en cola.'};
 }
 
 export async function rejectLeadRequest(targetUserId, requestId) {
@@ -243,48 +210,7 @@ export async function markOngoingRequest(targetUserId, requestId) {
 // ya contestó algo (conversación real) o el trato ya se cerró, lo PROTEGE y no lo
 // toca. Solo resetea los que se quedaron atorados sin ninguna respuesta real.
 // Aislado por cuenta: solo afecta los contactos del usuario que lo ejecuta.
-export async function resetDayRequests(targetUserId, dateStr) {
-  const userId = await resolveTargetUserId(targetUserId);
-  const supabase = createClient();
-
-  const since = new Date(`${dateStr}T00:00:00.000Z`);
-  const until = new Date(`${dateStr}T23:59:59.999Z`);
-
-  const { data: dayRequests } = await supabase
-    .from("lead_requests")
-    .select("*")
-    .eq("user_id", userId)
-    .eq("status", "activated")
-    .gte("message_created_at", since.toISOString())
-    .lte("message_created_at", until.toISOString());
-
-  if (!dayRequests || !dayRequests.length) return { ok: true, reset: 0, protected: 0 };
-
-  const { data: myLeads } = await supabase.from("leads").select("*").eq("user_id", userId);
-
-  let resetCount = 0;
-  let protectedCount = 0;
-
-  for (const req of dayRequests) {
-    const digits = (req.phone || "").replace(/[^0-9]/g, "");
-    const matchedLead = (myLeads || []).find(
-      (l) => (l.phone || "").replace(/[^0-9]/g, "") === digits
-    );
-
-    const hasRealReply = matchedLead?.conversation?.some((m) => m.role === "user");
-    const isClosed = matchedLead?.status === "cerrado";
-
-    if (matchedLead && (hasRealReply || isClosed)) {
-      protectedCount += 1;
-      continue; // conversación real o trato cerrado — nunca se toca
-    }
-
-    if (matchedLead) {
-      await supabase.from("leads").delete().eq("id", matchedLead.id).eq("user_id", userId);
-    }
-    await supabase.from("lead_requests").update({ status: "pending" }).eq("id", req.id).eq("user_id", userId);
-    resetCount += 1;
-  }
-
-  return { ok: true, reset: resetCount, protected: protectedCount };
+export async function resetDayRequests(targetUserId) {
+ await resolveTargetUserId(targetUserId);
+ return {error:'Los historiales se conservan. Revisa cada contacto desde Contactos para volver a escribir.'};
 }

@@ -138,42 +138,26 @@ export async function updateLeadStatus(targetUserId, leadId, status) {
   revalidatePath("/dashboard");
 }
 
-export async function toggleLeadPause(targetUserId, leadId, paused) {
-  const userId = await resolveTargetUserId(targetUserId);
-  const supabase = createClient();
-  await supabase.from("leads").update({ paused, updated_at: new Date().toISOString() }).eq("id", leadId).eq("user_id", userId);
-  revalidatePath("/dashboard");
+export async function toggleLeadPause(targetUserId,leadId,paused){
+ const userId=await resolveTargetUserId(targetUserId);
+ await engineRequest('/lead/'+userId+'/'+leadId,{method:'POST',body:{action:paused?'pause':'resume'}});
+ revalidatePath('/dashboard');
 }
 
-export async function removeLead(targetUserId, leadId) {
-  const userId = await resolveTargetUserId(targetUserId);
-  const supabase = createClient();
-  await supabase.from("leads").delete().eq("id", leadId).eq("user_id", userId);
-  revalidatePath("/dashboard");
+export async function removeLead(targetUserId,leadId){
+ const userId=await resolveTargetUserId(targetUserId);
+ await engineRequest('/lead/'+userId+'/'+leadId,{method:'POST',body:{action:'skipped'}});
+ revalidatePath('/dashboard');
 }
 
-// Para leads "cruzado" donde nunca se cerró nada: reinicia el proceso desde cero.
-// El bot manda el escrito principal otra vez en el próximo chequeo automático.
-export async function restartLead(targetUserId, leadId) {
-  const userId = await resolveTargetUserId(targetUserId);
-  const supabase = createClient();
-  await supabase
-    .from("leads")
-    .update({ status: "nuevo", paused: false, updated_at: new Date().toISOString() })
-    .eq("id", leadId)
-    .eq("user_id", userId);
-  revalidatePath("/dashboard");
+export async function restartLead(targetUserId,leadId){
+ const userId=await resolveTargetUserId(targetUserId);
+ await engineRequest('/lead/'+userId+'/'+leadId,{method:'POST',body:{action:'send'}});
+ revalidatePath('/dashboard');
 }
 
-// Para leads "cruzado" donde SÍ hubo un deal (por fuera del bot, o ya resuelto):
-// lo archiva localmente, sin reportarlo al Retainer Tracker ni duplicar nada.
-export async function resolveLeadManually(targetUserId, leadId) {
-  const userId = await resolveTargetUserId(targetUserId);
-  const supabase = createClient();
-  await supabase
-    .from("leads")
-    .update({ status: "cerrado", paused: true, updated_at: new Date().toISOString() })
-    .eq("id", leadId)
-    .eq("user_id", userId);
-  revalidatePath("/dashboard");
+export async function resolveLeadManually(targetUserId,leadId){
+ const userId=await resolveTargetUserId(targetUserId);
+ await engineRequest('/lead/'+userId+'/'+leadId,{method:'POST',body:{action:'collaborated'}});
+ revalidatePath('/dashboard');
 }
