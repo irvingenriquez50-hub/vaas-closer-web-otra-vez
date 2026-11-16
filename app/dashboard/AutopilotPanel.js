@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useState,useCallback,useMemo} from 'react';
-import {automationStatus,saveAutomation,syncContacts,decideContact} from './whatsapp-actions';
+import {automationStatus,saveAutomation,syncContacts,decideContact} from './whatsapp-client';
 const button='rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-40';
 const labels={queued:'En cola',review:'Revisar',active:'En proceso',skipped:'Archivado',collaborated:'Ya colaboré',blocked:'No contactar'};
 const formatDate=value=>value?new Date(value).toLocaleString('es-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'Pendiente';

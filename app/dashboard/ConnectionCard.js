@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useState,useCallback} from 'react';
-import {connectWhatsapp,whatsappStatus,resetWhatsapp,setBotEnabled,prepareWhatsappTemplates} from './whatsapp-actions';
+import {connectWhatsapp,whatsappStatus,resetWhatsapp,setBotEnabled,prepareWhatsappTemplates} from './whatsapp-client';
 import {AutomationSetup} from './AutopilotPanel';
 
 export default function ConnectionCard({userId,onProfile,onPrices}) {
