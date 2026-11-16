@@ -16,21 +16,20 @@ function computeStats(userId, leads, dealsThisMonth) {
     (l) => !["cerrado", "dormant", "cruzado"].includes(l.status) && !l.paused
   ).length;
   const negociando = userLeads.filter((l) => l.status === "negociando").length;
-  const crossFlags = userLeads.filter((l) => l.status === "cruzado").length;
 
   const userDeals = dealsThisMonth.filter((d) => d.user_id === userId);
   const dealsCount = userDeals.length;
   const revenue = userDeals.reduce((sum, d) => sum + Number(d.price || 0), 0);
 
-  return { activeLeads, negociando, crossFlags, dealsCount, revenue };
+  return { activeLeads, negociando, dealsCount, revenue };
 }
 
-export default function AdminClient({ users, sessions, channels, leads, dealsThisMonth }) {
+export default function AdminClient({ users, leads, dealsThisMonth }) {
   const [tab, setTab] = useState("activos");
+  const [system, setSystem] = useState(null);
   const [pending, startTransition] = useTransition();
 
-  const sessionFor = (userId) => sessions.find((s) => s.user_id === userId);
-  const channelFor = (userId) => channels.find((c) => c.user_id === userId);
+  const channelFor = (userId) => system?.channels?.find((c) => c.user_id === userId);
 
   const pendientes = users.filter((u) => u.status === "pending");
   const activos = users.filter((u) => u.status === "active");
@@ -51,7 +50,6 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
   const totalActiveLeads = activos.reduce((sum, u) => sum + computeStats(u.id, leads, dealsThisMonth).activeLeads, 0);
   const totalDealsThisMonth = dealsThisMonth.length;
   const totalRevenueThisMonth = dealsThisMonth.reduce((sum, d) => sum + Number(d.price || 0), 0);
-  const totalCrossFlags = activos.reduce((sum, u) => sum + computeStats(u.id, leads, dealsThisMonth).crossFlags, 0);
 
   return (
     <div className="min-h-screen w-full pb-16" style={{ background: "#0B0E14", color: "#EDEFF2" }}>
@@ -62,7 +60,7 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
         </button>
       </div>
 
-      <SystemControls />
+      <SystemControls onUpdate={setSystem} />
       <div className="px-5 pt-4 flex gap-2">
         {[
           ["pendientes", `Solicitudes (${pendientes.length})`],
@@ -81,7 +79,7 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
       </div>
 
       {tab === "activos" && (
-        <div className="px-5 mt-4 grid grid-cols-2 gap-2">
+        <div className="px-5 mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
           <div className="rounded-xl p-3" style={{ background: "#141B24", border: "1px solid #232D3A" }}>
             <div style={{ fontSize: 10, color: "#8B96A5" }}>Leads activos (todos)</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: "#22D3C0" }}>{totalActiveLeads}</div>
@@ -94,10 +92,6 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
             <div style={{ fontSize: 10, color: "#8B96A5" }}>Ingresos este mes</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: "#F2B84B" }}>${totalRevenueThisMonth.toLocaleString()}</div>
           </div>
-          <div className="rounded-xl p-3" style={{ background: "#141B24", border: totalCrossFlags > 0 ? "1px solid #F2B84B" : "1px solid #232D3A" }}>
-            <div style={{ fontSize: 10, color: "#8B96A5" }}>Contactos por revisar</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: totalCrossFlags > 0 ? "#F2B84B" : "#8B96A5" }}>{totalCrossFlags}</div>
-          </div>
         </div>
       )}
 
@@ -108,10 +102,8 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
           </div>
         )}
         {list.map((u) => {
-          const session = sessionFor(u.id);
           const channel = channelFor(u.id);
           const dLeft = daysLeft(u.expires_at);
-          const hasChannel = !!channel?.phone_number;
           const stats = tab === "activos" ? computeStats(u.id, leads, dealsThisMonth) : null;
 
           return (
@@ -124,10 +116,10 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
                     <div className="flex items-center gap-1.5 mt-1">
                       <span
                         className="w-1.5 h-1.5 rounded-full"
-                        style={{ background: session?.connected ? "#34D399" : "#F19999" }}
+                        style={{ background: channel?.connected ? "#34D399" : "#8B96A5" }}
                       />
                       <span style={{ fontSize: 11, color: "#8B96A5" }}>
-                        {"Revisa la conexión en Control del sistema"} · {dLeft != null ? `${dLeft} días restantes` : ""}
+                        {!system?'Revisando conexión…':channel?.connected?`WhatsApp conectado · ${channel.bot_enabled?'Bot activado':'Bot pausado'}`:'WhatsApp pendiente de conectar'} · {dLeft != null ? `${dLeft} días restantes` : ""}
                       </span>
                     </div>
                   )}
@@ -191,11 +183,6 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
                   <div className="px-2 py-1 rounded-md text-[10px]" style={{ background: "#34D39922", color: "#34D399" }}>
                     {stats.dealsCount} cerrados este mes (${stats.revenue.toLocaleString()})
                   </div>
-                  {stats.crossFlags > 0 && (
-                    <div className="px-2 py-1 rounded-md text-[10px]" style={{ background: "#F2B84B22", color: "#F2B84B" }}>
-                      ⚠️ {stats.crossFlags} por revisar
-                    </div>
-                  )}
                 </div>
               )}
 

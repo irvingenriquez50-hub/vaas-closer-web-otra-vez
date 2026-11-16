@@ -2,9 +2,9 @@
 import {useState,useEffect,useCallback} from 'react';
 import {getSystemOverview,toggleSystemSends} from './actions';
 
-export default function SystemControls(){
+export default function SystemControls({onUpdate}){
   const [state,setState]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
-  const refresh=useCallback(async()=>{try{setState(await getSystemOverview());setError('');}catch(e){setError(e.message);}},[]);
+  const refresh=useCallback(async()=>{try{const next=await getSystemOverview();setState(next);onUpdate?.(next);setError('');}catch(e){setError(e.message);}},[onUpdate]);
   useEffect(()=>{refresh();const t=setInterval(refresh,30000);return()=>clearInterval(t);},[refresh]);
   return <section className="mx-5 my-4 p-4 rounded-xl border border-slate-700 bg-slate-900">
     <h2 className="font-semibold">Control del sistema · Zernio</h2>

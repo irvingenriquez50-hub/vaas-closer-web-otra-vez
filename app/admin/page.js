@@ -16,8 +16,6 @@ export default async function AdminPage() {
   if (user.email !== process.env.NEXT_PUBLIC_ADMIN_EMAIL) redirect("/pending");
 
   const { data: users } = await supabase.from("users").select("*").order("created_at", { ascending: false });
-  const { data: sessions } = await supabase.from("bot_sessions").select("*");
-  const channels = [];
   const { data: leads } = await supabase.from("leads").select("user_id,status,paused");
   const { data: dealsThisMonth } = await supabase
     .from("closed_deals")
@@ -27,8 +25,6 @@ export default async function AdminPage() {
   return (
     <AdminClient
       users={users || []}
-      sessions={sessions || []}
-      channels={channels || []}
       leads={leads || []}
       dealsThisMonth={dealsThisMonth || []}
     />
