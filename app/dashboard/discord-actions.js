@@ -31,7 +31,7 @@ const DIA_MS = 24 * 60 * 60 * 1000;
 // servidor a propósito: aunque alguien manipule la página, aquí se recorta.
 //   Miembro: 30 días, fijo. No hay forma de pedir más.
 //   Admin:   hasta 400 días, para poder retomar contactos viejos.
-const MEMBER_DAYS = 60;
+const MEMBER_DAYS = 30;
 const ADMIN_MAX_DAYS = 400;
 
 export async function getDiscordCalendar(targetUserId, days = MEMBER_DAYS) {

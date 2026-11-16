@@ -6,7 +6,7 @@ export async function GET(request) {
  if(!expected || Buffer.byteLength(expected)!==Buffer.byteLength(provided) || !timingSafeEqual(Buffer.from(expected),Buffer.from(provided)))
   return Response.json({ok:false},{status:401});
  const days=Number(new URL(request.url).searchParams.get('days'));
- if(![30,60].includes(days)) return Response.json({ok:false},{status:400});
+ if(days!==30) return Response.json({ok:false},{status:400});
  if(!process.env.DISCORD_BOT_URL || !process.env.BOT_IMPORT_SECRET || !process.env.DISCORD_CHANNEL_ID)
   return Response.json({ok:false},{status:503});
  try {
