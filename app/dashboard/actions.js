@@ -19,6 +19,11 @@ async function resolveTargetUserId(requestedId) {
 
 const digitsOf = (s) => (s || "").replace(/[^0-9]/g, "");
 
+async function syncApprovalAfterSave(userId) {
+  try {return {approval:await engineRequest('/templates/'+userId+'/sync',{method:'POST'})};}
+  catch {return {warning:'Tus datos se guardaron, pero no pudimos comprobar o solicitar la aprobación. Revisa la pestaña WhatsApp antes de activar el bot.'};}
+}
+
 /** Busca un lead de este usuario por número, comparando solo los últimos 8 dígitos
  * — así da igual si está guardado como "+86 135 7603 8204" o "8613576038204". */
 async function findLeadByPhone(supabase, userId, phoneRaw) {
@@ -41,6 +46,7 @@ export async function saveScript(targetUserId, fields) {
   });
   if(error) throw new Error("No se pudo guardar tu perfil.");
   revalidatePath("/dashboard");
+  return syncApprovalAfterSave(userId);
 }
 
 export async function savePricing(targetUserId, tiers) {
@@ -57,6 +63,7 @@ export async function savePricing(targetUserId, tiers) {
   const {error}=await supabase.from("pricing_tiers").upsert(rows, { onConflict: "user_id,videos" });
   if(error) throw new Error("No se pudieron guardar tus precios.");
   revalidatePath("/dashboard");
+  return syncApprovalAfterSave(userId);
 }
 
 export async function addLead(targetUserId, phoneRaw, skipMessage1 = false) {

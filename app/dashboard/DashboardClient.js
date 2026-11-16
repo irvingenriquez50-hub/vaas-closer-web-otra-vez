@@ -5,6 +5,8 @@ import { saveScript, savePricing, addLead, updateLeadStatus, toggleLeadPause, re
 
 import AutopilotPanel from './AutopilotPanel';
 import ConnectionCard from "./ConnectionCard";
+import ScriptApproval from './TemplateApproval';
+import {openingPreview} from '@/lib/template-approval.mjs';
 import { useRouter } from "next/navigation";
 import { getDiscordCalendar, importDay, listLeadRequests, activateLeadRequest, rejectLeadRequest, markOngoingRequest, resetDayRequests, getDayStatuses } from "./discord-actions";
 
@@ -43,8 +45,8 @@ const STRINGS = {
 
   // Tu escrito
   script_intro: {
-    es: "Estos datos rellenan el mensaje 1 (el que el bot manda a cada número nuevo) — la aprobación del mensaje se comprueba en la pestaña WhatsApp.",
-    en: "These fields fill in message 1 (the one the bot sends to every new number) — the text itself is already approved by WhatsApp, you just fill in your data.",
+    es: "Estos datos rellenan tu primer mensaje. Con WhatsApp conectado y los precios guardados, al guardar se solicita la aprobación automáticamente. Si la plantilla ya está aprobada, actualizar estos datos no requiere otra aprobación.",
+    en: "These fields fill in your first message. With WhatsApp connected and prices saved, saving automatically requests approval. Updating these details does not require another approval if the template is already approved.",
   },
   f_gmv_total: { es: "GMV total (ej. 2M)", en: "Total GMV (e.g. 2M)" },
   f_market: { es: "Mercado / audiencia", en: "Market / audience" },
@@ -54,7 +56,7 @@ const STRINGS = {
   ph_tiktok: { es: "tuusuario", en: "yourhandle" },
   saved_check: { es: "Guardado ✓", en: "Saved ✓" },
   save_script: { es: "Guardar escrito", en: "Save script" },
-  preview_label: { es: "Vista previa (usa tus precios ya guardados):", en: "Preview (uses your saved prices):" },
+  preview_label: { es: "Vista previa del primer mensaje (guarda tus cambios antes de usarlo):", en: "First message preview (save your changes before using it):" },
 
   // Precios
   price_intro: {
@@ -386,37 +388,7 @@ const emptyScriptFields = { gmvTotal: "", market: "Spanish-speaking", shortName:
    Es el mensaje que le llega a la marca. Siempre va en inglés, sin importar en
    qué idioma esté el panel. */
 function buildPreviewText(fields, tiers) {
-  const tier1 = tiers.find((t) => t.videos === 1);
-  const tier5 = tiers.find((t) => t.videos === 5);
-  const tier10 = tiers.find((t) => t.videos === 10);
-
-  return `• FROM THE VAAS COMMUNITY •
-
-I would love to work with your brand!
-
-I've helped multiple brands generate millions of views and over $${fields.gmvTotal || "___"} GMV within the ${fields.market || "___"} U.S. audience.
-
-To keep quality high and give each video the time needed to create the best possible content, I only work through retainers. All packages include ad usage rights unless otherwise discussed.
-
-${fields.shortName || "___"} — RATES
-
-1x Video — $${tier1?.anchor ?? "___"} per video
-
-5x Videos/Month — $${tier5?.anchor ?? "___"}
-(10% discount applied)
-
-10x Videos/Month — $${tier10?.anchor ?? "___"}
-(20% discount applied)
-
-If this aligns with what you're looking for, I'd be happy to lock in a slot this week and start brainstorming content ideas tailored specifically to your brand.
-
-Looking forward to working together,
-
-Last 30 Days GMV: $${fields.gmv30d || "___"} USD
-
-My TikTok Account: @${fields.tiktokHandle || "___"}
-
-— The VAAS Community`;
+  return openingPreview(fields,tiers);
 }
 
 export default function DashboardClient({ targetUserId, isAdminView, isAdmin = false, profile, initialTiers, initialScript, initialLeads, connectionResult }) {
@@ -443,6 +415,9 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
   const router=useRouter();
   const [scriptFields, setScriptFields] = useState({ ...emptyScriptFields, ...(initialScript || {}) });
   const [scriptSaved, setScriptSaved] = useState(true);
+  const [approvalRevision,setApprovalRevision]=useState(0);
+  const [approvalWarning,setApprovalWarning]=useState('');
+  const [savingProfile,setSavingProfile]=useState(false);
 
   const mergedTiers = defaultTiers().map((d) => {
     const found = (initialTiers || []).find((row) => row.videos === d.videos);
@@ -554,18 +529,18 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
     });
   };
 
-  const doSaveScript = () => {
-    startTransition(async () => {
-      try {await saveScript(targetUserId, scriptFields);setScriptSaved(true);}
+  const doSaveScript = async () => {
+      setSavingProfile(true);
+      try {const result=await saveScript(targetUserId, scriptFields);setScriptSaved(true);setApprovalWarning(result?.warning||'');setApprovalRevision(n=>n+1);}
       catch(error){window.alert(error.message);}
-    });
+      finally{setSavingProfile(false);}
   };
 
-  const doSavePricing = () => {
-    startTransition(async () => {
-      try {await savePricing(targetUserId, tiers);setTiersSaved(true);}
+  const doSavePricing = async () => {
+      setSavingProfile(true);
+      try {const result=await savePricing(targetUserId, tiers);setTiersSaved(true);setApprovalWarning(result?.warning||'');setApprovalRevision(n=>n+1);}
       catch(error){window.alert(error.message);}
-    });
+      finally{setSavingProfile(false);}
   };
 
   const applyPriceTable = () => {
@@ -814,13 +789,15 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
       {tab === "whatsapp" && <>
         {connectionResult==='retry' && <p role="alert" className="mx-5 mt-4 text-amber-300 text-sm">La conexión no se completó. Vuelve a conectar WhatsApp desde aquí.</p>}
         {connectionResult==='success' && <p className="mx-5 mt-4 text-emerald-300 text-sm">Número conectado. Revisa los pasos pendientes antes de activar tu bot.</p>}
-        <ConnectionCard userId={targetUserId} onProfile={()=>setTab('escrito')} onPrices={()=>setTab('precios')} />
+        <ConnectionCard userId={targetUserId} lang={lang} onProfile={()=>setTab('escrito')} onPrices={()=>setTab('precios')} />
       </>}
 
       {(tab === "contacts" || tab === "revision") && <AutopilotPanel userId={targetUserId}/>}
 
       {tab === "escrito" && (
         <div className="px-5 pt-4">
+          <div className="mb-4"><ScriptApproval userId={targetUserId} revision={approvalRevision} lang={lang} unsaved={!scriptSaved||!tiersSaved}/></div>
+          {approvalWarning&&<p role="alert" className="mb-3 text-sm text-amber-200">{approvalWarning}</p>}
           <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 12 }}>
             {t("script_intro")}
           </div>
@@ -853,11 +830,11 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
 
           <button
             onClick={doSaveScript}
-            disabled={pending}
+            disabled={pending || savingProfile}
             className="w-full mt-4 py-2.5 rounded-xl font-semibold text-sm"
             style={{ background: scriptSaved ? "#141B24" : "#22D3C0", color: scriptSaved ? "#8B96A5" : "#06110F", border: scriptSaved ? "1px solid #232D3A" : "none" }}
           >
-            {scriptSaved ? t("saved_check") : t("save_script")}
+            {savingProfile?(lang==='en'?'Saving and checking approval…':'Guardando y consultando aprobación…'):scriptSaved ? t("saved_check") : t("save_script")}
           </button>
 
           <div style={{ fontSize: 11, color: "#8B96A5", marginTop: 20, marginBottom: 8 }}>{t("preview_label")}</div>
@@ -872,6 +849,7 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
 
       {tab === "precios" && (
         <div className="px-5 pt-4">
+          {approvalWarning&&<p role="alert" className="mb-3 text-sm text-amber-200">{approvalWarning}</p>}
           <div className="rounded-xl p-4 mb-4" style={{ background: "#141B24", border: "1px solid #22D3C0" }}>
             <div style={{ fontSize: 12, color: "#8B96A5", marginBottom: 8 }}>
               {t("price_intro")}
@@ -950,11 +928,11 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
           </div>
           <button
             onClick={doSavePricing}
-            disabled={pending}
+            disabled={pending || savingProfile}
             className="w-full py-2.5 rounded-xl font-semibold text-sm"
             style={{ background: tiersSaved ? "#141B24" : "#22D3C0", color: tiersSaved ? "#8B96A5" : "#06110F", border: tiersSaved ? "1px solid #232D3A" : "none" }}
           >
-            {tiersSaved ? t("saved_check") : t("save_pricing")}
+            {savingProfile?(lang==='en'?'Saving and checking approval…':'Guardando y consultando aprobación…'):tiersSaved ? t("saved_check") : t("save_pricing")}
           </button>
         </div>
       )}

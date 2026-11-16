@@ -2,8 +2,9 @@
 import {useEffect,useState,useCallback} from 'react';
 import {connectWhatsapp,whatsappStatus,resetWhatsapp,setBotEnabled,prepareWhatsappTemplates} from './whatsapp-client';
 import {AutomationSetup} from './AutopilotPanel';
+import {TemplateApproval} from './TemplateApproval';
 
-export default function ConnectionCard({userId,onProfile,onPrices}) {
+export default function ConnectionCard({userId,onProfile,onPrices,lang='es'}) {
   const [state,setState]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[mode,setMode]=useState('business_app');
   const refresh=useCallback(async()=>{
     try{const result=await whatsappStatus(userId);setState(result);setError('');}
@@ -32,7 +33,8 @@ export default function ConnectionCard({userId,onProfile,onPrices}) {
     </div>
     <div className={card}><h3 className="font-semibold">2. Guarda tu perfil y precios</h3>
       <p className="text-sm text-slate-400 mt-2">El bot usará tu información y respetará el precio mínimo de cada paquete.</p>
-      <div className="flex gap-2 mt-3"><button className={`${button} bg-slate-800`} onClick={onProfile}>Mi perfil</button><button className={`${button} bg-slate-800`} onClick={onPrices}>Mis precios</button></div></div>
+      <div className="flex gap-2 mt-3"><button className={`${button} bg-slate-800`} onClick={onProfile}>Mi perfil</button><button className={`${button} bg-slate-800`} onClick={onPrices}>Mis precios</button></div>
+      <div className="mt-4"><TemplateApproval state={state} error={error} lang={lang}/></div></div>
     <div className={card}><h3 className="font-semibold mb-3">3. Prepara tus contactos</h3><AutomationSetup userId={userId} onSaved={refresh}/></div>
     <div className={card}><h3 className="font-semibold">4. {state?.botEnabled?'Bot activado':'Activa tu bot'}</h3>
       <ul className="my-4 space-y-2 text-sm">{(state?.checks || []).map(c=><li key={c.key} className={c.ok?'text-emerald-300':'text-slate-400'}>{c.ok?'✓':'○'} {c.label}</li>)}</ul>
