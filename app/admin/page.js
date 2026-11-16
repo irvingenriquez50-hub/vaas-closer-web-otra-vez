@@ -17,7 +17,7 @@ export default async function AdminPage() {
 
   const { data: users } = await supabase.from("users").select("*").order("created_at", { ascending: false });
   const { data: sessions } = await supabase.from("bot_sessions").select("*");
-  const { data: channels } = await supabase.from("whatsapp_channels").select("*");
+  const channels = [];
   const { data: leads } = await supabase.from("leads").select("user_id,status,paused");
   const { data: dealsThisMonth } = await supabase
     .from("closed_deals")

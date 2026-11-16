@@ -14,8 +14,8 @@ export default async function DashboardPage({ searchParams }) {
   const isAdminView = isAdmin && targetUserId !== user.id;
 
   if (!isAdmin) {
-    const { data: profile } = await supabase.from("users").select("status").eq("id", user.id).maybeSingle();
-    if (!profile || profile.status !== "active") redirect("/pending");
+    const { data: profile } = await supabase.from("users").select("status,expires_at").eq("id", user.id).maybeSingle();
+    if (!profile || profile.status !== "active" || (profile.expires_at && Date.parse(profile.expires_at)<=Date.now())) redirect("/pending");
   }
 
   const [{ data: profile }, { data: tiers }, { data: script }, { data: leads }] = await Promise.all([
@@ -27,6 +27,8 @@ export default async function DashboardPage({ searchParams }) {
 
   return (
     <DashboardClient
+      key={targetUserId}
+      connectionResult={searchParams?.connection}
       targetUserId={targetUserId}
       isAdminView={isAdminView}
       isAdmin={isAdmin}

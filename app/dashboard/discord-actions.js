@@ -1,4 +1,5 @@
 "use server";
+import {engineRequest} from "@/lib/engine";
 import { createClient } from "@/lib/supabase/server";
 
 async function resolveTargetUserId(requestedId) {
@@ -90,7 +91,7 @@ export async function importDay(targetUserId, dateStr) {
     const digits = c.phone.replace(/[^0-9]/g, "");
     const cross = (allLeads || []).some((l) => {
       const leadDigits = (l.phone || "").replace(/[^0-9]/g, "");
-      return leadDigits && digits.slice(-8) === leadDigits.slice(-8);
+      return leadDigits && digits === leadDigits;
     });
 
     const row = {
@@ -151,7 +152,7 @@ export async function listLeadRequests(targetUserId) {  const userId = await res
  * (tabla leads) o un trato cerrado (tabla closed_deals). Solo LEE — no cambia
  * nada. Devuelve un resumen en palabras para enseñárselo a Irving. */
 async function findExistingHistory(supabase, userId, phone) {
-  const tail = digitsOf(phone).slice(-8);
+  const tail = digitsOf(phone);
   if (!tail || tail.length < 7) return null;
 
   const [{ data: myLeads }, { data: myClosed }] = await Promise.all([
@@ -159,8 +160,8 @@ async function findExistingHistory(supabase, userId, phone) {
     supabase.from("closed_deals").select("phone,price,videos,closed_at").eq("user_id", userId),
   ]);
 
-  const lead = (myLeads || []).find((l) => digitsOf(l.phone).slice(-8) === tail);
-  const closed = (myClosed || []).find((c) => digitsOf(c.phone).slice(-8) === tail);
+  const lead = (myLeads || []).find((l) => digitsOf(l.phone) === tail);
+  const closed = (myClosed || []).find((c) => digitsOf(c.phone) === tail);
   if (!lead && !closed) return null;
 
   const parts = [];
@@ -211,12 +212,9 @@ export async function activateLeadRequest(targetUserId, requestId, phone, skipMe
   }
 
   // No hay lead previo (o solo había trato cerrado sin chat): flujo normal.
-  const res = await fetch(`${process.env.BOT_ENGINE_URL}/add-lead/${userId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ phone, skipMessage1 }),
-  });
-  const data = await res.json();
+  let data;
+  try {data=await engineRequest('/add-lead/'+userId,{method:'POST',body:{phone:phone,skipMessage1}});}
+  catch(e){return {error:e.message};}
   if (!data.ok) return { error: data.error || "No se pudo activar el contacto." };
 
   await supabase.from("lead_requests").update({ status: "activated" }).eq("id", requestId).eq("user_id", userId);
@@ -270,7 +268,7 @@ export async function resetDayRequests(targetUserId, dateStr) {
   for (const req of dayRequests) {
     const digits = (req.phone || "").replace(/[^0-9]/g, "");
     const matchedLead = (myLeads || []).find(
-      (l) => (l.phone || "").replace(/[^0-9]/g, "").slice(-8) === digits.slice(-8)
+      (l) => (l.phone || "").replace(/[^0-9]/g, "") === digits
     );
 
     const hasRealReply = matchedLead?.conversation?.some((m) => m.role === "user");

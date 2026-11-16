@@ -1,7 +1,8 @@
 "use client";
 import { useState, useTransition } from "react";
+import SystemControls from "./SystemControls";
 import { createClient } from "@/lib/supabase/client";
-import { approveUser, renewUser, deactivateUser, saveWhatsappChannel } from "./actions";
+import { approveUser, renewUser, deactivateUser } from "./actions";
 
 function daysLeft(expiresAt) {
   if (!expiresAt) return null;
@@ -25,11 +26,8 @@ function computeStats(userId, leads, dealsThisMonth) {
 }
 
 export default function AdminClient({ users, sessions, channels, leads, dealsThisMonth }) {
-  const [tab, setTab] = useState("pendientes");
+  const [tab, setTab] = useState("activos");
   const [pending, startTransition] = useTransition();
-  const [apiKeyDrafts, setApiKeyDrafts] = useState({});
-  const [phoneDrafts, setPhoneDrafts] = useState({});
-  const [savedFlash, setSavedFlash] = useState({});
 
   const sessionFor = (userId) => sessions.find((s) => s.user_id === userId);
   const channelFor = (userId) => channels.find((c) => c.user_id === userId);
@@ -45,18 +43,6 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
     const supabase = createClient();
     await supabase.auth.signOut();
     window.location.href = "/login";
-  };
-
-  const doSaveChannel = (userId) => {
-    const channel = channelFor(userId);
-    const apiKey = apiKeyDrafts[userId] ?? channel?.d360_api_key ?? "";
-    const phone = phoneDrafts[userId] ?? channel?.phone_number ?? "";
-    if (!apiKey.trim() || !phone.trim()) return;
-    startTransition(async () => {
-      await saveWhatsappChannel(userId, apiKey, phone);
-      setSavedFlash((f) => ({ ...f, [userId]: true }));
-      setTimeout(() => setSavedFlash((f) => ({ ...f, [userId]: false })), 3000);
-    });
   };
 
   const list = tab === "pendientes" ? pendientes : tab === "activos" ? activos : vencidos;
@@ -76,6 +62,7 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
         </button>
       </div>
 
+      <SystemControls />
       <div className="px-5 pt-4 flex gap-2">
         {[
           ["pendientes", `Solicitudes (${pendientes.length})`],
@@ -124,7 +111,7 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
           const session = sessionFor(u.id);
           const channel = channelFor(u.id);
           const dLeft = daysLeft(u.expires_at);
-          const hasChannel = !!channel?.d360_api_key;
+          const hasChannel = !!channel?.phone_number;
           const stats = tab === "activos" ? computeStats(u.id, leads, dealsThisMonth) : null;
 
           return (
@@ -140,7 +127,7 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
                         style={{ background: session?.connected ? "#34D399" : "#F19999" }}
                       />
                       <span style={{ fontSize: 11, color: "#8B96A5" }}>
-                        {session?.connected ? "WhatsApp conectado" : "WhatsApp no conectado"} · {dLeft != null ? `${dLeft} días restantes` : ""}
+                        {"Revisa la conexión en Control del sistema"} · {dLeft != null ? `${dLeft} días restantes` : ""}
                       </span>
                     </div>
                   )}
@@ -212,44 +199,7 @@ export default function AdminClient({ users, sessions, channels, leads, dealsThi
                 </div>
               )}
 
-              {tab === "activos" && (
-                <div className="mt-3 pt-3" style={{ borderTop: "1px solid #232D3A" }}>
-                  <div style={{ fontSize: 11, color: "#8B96A5", marginBottom: 6 }}>
-                    WhatsApp Business — 360dialog
-                    {hasChannel && (
-                      <span style={{ color: "#34D399", marginLeft: 6 }}>
-                        ✓ {channel.phone_number}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Número (ej. 13463207120)"
-                      value={phoneDrafts[u.id] ?? channel?.phone_number ?? ""}
-                      onChange={(e) => setPhoneDrafts((d) => ({ ...d, [u.id]: e.target.value }))}
-                      className="rounded-lg px-2.5 py-1.5 text-xs outline-none"
-                      style={{ width: 160, background: "#0B0E14", border: "1px solid #232D3A", color: "#EDEFF2", fontFamily: F_MONO }}
-                    />
-                    <input
-                      type="text"
-                      placeholder="API Key de 360dialog"
-                      value={apiKeyDrafts[u.id] ?? channel?.d360_api_key ?? ""}
-                      onChange={(e) => setApiKeyDrafts((d) => ({ ...d, [u.id]: e.target.value }))}
-                      className="flex-1 rounded-lg px-2.5 py-1.5 text-xs outline-none"
-                      style={{ background: "#0B0E14", border: "1px solid #232D3A", color: "#EDEFF2", fontFamily: F_MONO }}
-                    />
-                    <button
-                      onClick={() => doSaveChannel(u.id)}
-                      disabled={pending}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap"
-                      style={{ background: savedFlash[u.id] ? "#34D399" : "#22D3C0", color: "#06110F" }}
-                    >
-                      {savedFlash[u.id] ? "Guardado ✓" : "Guardar"}
-                    </button>
-                  </div>
-                </div>
-              )}
+              {tab === "activos" && <a href={`/dashboard?as=${u.id}&tab=whatsapp`} className="block mt-3 text-sm text-teal-300">Conectar WhatsApp y controlar bot →</a>}
             </div>
           );
         })}
