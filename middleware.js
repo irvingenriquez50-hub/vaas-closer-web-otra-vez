@@ -2,6 +2,9 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 
 export async function middleware(request) {
+  // This single server-to-server endpoint authenticates its shared secret in the route.
+  // Browser session redirects would turn an internal fetch into an HTML login page.
+  if(request.nextUrl.pathname==='/api/internal/closer-contacts') return NextResponse.next();
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
