@@ -21,7 +21,7 @@ const digitsOf = (s) => (s || "").replace(/[^0-9]/g, "");
 
 async function syncApprovalAfterSave(userId) {
   try {return {approval:await engineRequest('/templates/'+userId+'/sync',{method:'POST'})};}
-  catch {return {warning:'Tus datos se guardaron, pero no pudimos comprobar o solicitar la aprobación. Revisa la pestaña WhatsApp antes de activar el bot.'};}
+  catch(error) {return {warning:`Tus datos se guardaron, pero no pudimos comprobar o solicitar la aprobación: ${error.message} Revisa la pestaña WhatsApp antes de activar el bot.`};}
 }
 
 /** Busca un lead de este usuario por número, comparando solo los últimos 8 dígitos

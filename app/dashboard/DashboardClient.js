@@ -7,6 +7,7 @@ import AutopilotPanel from './AutopilotPanel';
 import ConnectionCard from "./ConnectionCard";
 import ScriptApproval from './TemplateApproval';
 import {openingPreview} from '@/lib/template-approval.mjs';
+import {OPENING_NAME,FOLLOWUP_NAME,FOLLOWUP_BODY} from '@/lib/whatsapp-templates.mjs';
 import { useRouter } from "next/navigation";
 import { getDiscordCalendar, importDay, listLeadRequests, activateLeadRequest, rejectLeadRequest, markOngoingRequest, resetDayRequests, getDayStatuses } from "./discord-actions";
 
@@ -843,6 +844,13 @@ export default function DashboardClient({ targetUserId, isAdminView, isAdmin = f
             style={{ background: "#141B24", border: "1px solid #232D3A", color: "#8B96A5", fontFamily: F_MONO, lineHeight: 1.6 }}
           >
             {buildPreviewText(scriptFields, tiers)}
+          </div>
+          <p className="mt-2 text-xs text-slate-400">{lang==='es'?'Plantilla':'Template'}: <code>{OPENING_NAME}</code> · English</p>
+          <p className="mt-2 text-xs text-slate-400">{lang==='es'?'Los importes salen del precio inicial (anchor) de 1, 5 y 10 videos en Precios. Los valores medio y mínimo se reservan para la negociación.':'Amounts use the saved opening prices (anchor) for 1, 5 and 10 videos. Mid and floor prices are used during negotiation.'}</p>
+          <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900 p-4">
+            <p className="text-sm font-semibold">{lang==='es'?'Mensaje de seguimiento':'Follow-up message'}</p>
+            <p className="mt-2 text-sm">{FOLLOWUP_BODY}</p>
+            <p className="mt-2 text-xs text-slate-400">{lang==='es'?'Plantilla':'Template'}: <code>{FOLLOWUP_NAME}</code> · English</p>
           </div>
         </div>
       )}
